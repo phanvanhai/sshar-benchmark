@@ -8,8 +8,7 @@ Supported datasets
 1. UT_HAR
 2. SSHAR_ESP
 3. SSHAR_Nexmon
-
-Author:
+4. XRF55
 """
 
 from pathlib import Path
@@ -272,6 +271,7 @@ class _SSHARDatasetBase(Dataset):
         device,
         signal="amp",
         split="train",
+        shape_option="2d",
         normalize=True,
         norm_type="zscore",
         mean=None,
@@ -285,6 +285,7 @@ class _SSHARDatasetBase(Dataset):
         self.device = device
         self.signal = signal
         self.split = split
+        self.shape_option = shape_option
         self.normalize = normalize
         self.norm_type = norm_type
         self.mean = mean
@@ -449,23 +450,25 @@ class _SSHARDatasetBase(Dataset):
         # Stack RX
         #
         # ESP:
-        #   (3,1,56,1000)
+        #   (3,1,56,1000) = (rx, tx, sub, time)
         #
         # Nexmon:
-        #   (3,4,56,1000)
+        #   (3,4,56,1000) = (rx, tx, sub, time)
         # --------------------------------------------------
         x = np.stack(rx_data)
 
         # --------------------------------------------------
-        # Merge RX + antenna
-        #
-        # ESP:
-        #   (168,1000)
-        #
-        # Nexmon:
-        #   (672,1000)
+        # Merge RX + antenna based on shape_option
         # --------------------------------------------------
-        x = x.reshape(-1, x.shape[-1])
+        if self.shape_option == "2d":
+            # Flatten everything except time: (rx*tx*sub, time)
+            x = x.reshape(-1, x.shape[-1])
+        elif self.shape_option == "3d":
+            # Keep subcarriers as separate dimension: (rx*tx, sub, time)
+            rx, tx, sub, time_len = x.shape
+            x = x.reshape(rx * tx, sub, time_len)
+        else:
+            raise ValueError(f"Unknown shape_option: {self.shape_option}")
 
         # --------------------------------------------------
         # Normalization
@@ -495,9 +498,12 @@ class _SSHARDatasetBase(Dataset):
                 )
 
         x = torch.from_numpy(x).float()
+        
         # --------------------------------------------------
         # Temporal pooling
         #
+        # F.adaptive_max_pool1d operates on the last dimension (time).
+        # It natively handles both (C, L) and (N, C, L) inputs.
         # 1000 -> 250
         # --------------------------------------------------
         x = F.adaptive_max_pool1d(
@@ -519,6 +525,7 @@ class SSHAR_ESP_Dataset(_SSHARDatasetBase):
         root_dir,
         signal="amp",
         split="train",
+        shape_option="2d",
         normalize=True,
         norm_type="zscore",
         mean=None,
@@ -532,6 +539,7 @@ class SSHAR_ESP_Dataset(_SSHARDatasetBase):
             device="esp",
             signal=signal,
             split=split,
+            shape_option=shape_option,
             normalize=normalize,
             norm_type=norm_type,
             mean=mean,
@@ -550,6 +558,7 @@ class SSHAR_Nexmon_Dataset(_SSHARDatasetBase):
         root_dir,
         signal="amp",
         split="train",
+        shape_option="2d",
         normalize=True,
         norm_type="zscore",
         mean=None,
@@ -563,6 +572,7 @@ class SSHAR_Nexmon_Dataset(_SSHARDatasetBase):
             device="nexmon",
             signal=signal,
             split=split,
+            shape_option=shape_option,
             normalize=normalize,
             norm_type=norm_type,
             mean=mean,
@@ -610,6 +620,150 @@ def compute_sshar_mean_std(dataset):
 
 
 # ============================================================
+# XRF55 Dataset (Subset)
+# ============================================================
+class XRF55Dataset(Dataset):
+    """
+    XRF55 Dataset (Subset for 8 actions and all users)
+
+    Format requirements:
+    - Files are in .npy format.
+    - Filenames follow the pattern a_b_c.npy
+      a = User ID (2 digits)
+      b = Action ID (2 digits) -> will be zero-indexed for PyTorch
+      c = Repetition number
+
+    Split rule is determined by a maximum repetition number for training.
+    """
+    def __init__(
+        self,
+        root_dir,
+        split="train",
+        train_max_rep=16,
+        shape_option="2d",
+        num_sub=30,  # XRF55 typically uses Intel 5300 with 30 subcarriers per antenna
+        normalize=True,
+        norm_type="minmax",
+        mean=None,
+        std=None,
+    ):
+        self.root_dir = Path(root_dir)
+        self.split = split
+        self.train_max_rep = train_max_rep
+        self.shape_option = shape_option
+        self.num_sub = num_sub
+        self.normalize = normalize
+        self.norm_type = norm_type
+        self.mean = mean
+        self.std = std
+
+        self.samples = []
+        self.build_index()
+
+    def build_index(self):
+        if not self.root_dir.exists():
+            raise FileNotFoundError(f"Directory not found: {self.root_dir}")
+
+        for file_path in self.root_dir.glob("*.npy"):
+            name_parts = file_path.stem.split('_')
+            
+            # Ensure it matches a_b_c format
+            if len(name_parts) == 3:
+                user_id, action_id, rep_id = name_parts
+                rep_num = int(rep_id)
+                
+                is_train = rep_num <= self.train_max_rep
+                is_test = rep_num > self.train_max_rep
+
+                if self.split == "train" and not is_train:
+                    continue
+                if self.split == "test" and not is_test:
+                    continue
+
+                # Pytorch requires labels starting at 0
+                label = int(action_id) - 1 
+                
+                self.samples.append({
+                    "path": str(file_path),
+                    "label": label
+                })
+
+    def __len__(self):
+        return len(self.samples)
+
+    def __getitem__(self, idx):
+        sample = self.samples[idx]
+        x = np.load(sample["path"]).astype(np.float32)
+        y = sample["label"]
+        
+        # Reshape logically based on shape_option
+        if self.shape_option == "3d":
+            # Assuming raw input is 2D: (C, Time) where C = dev_anten * num_sub
+            if len(x.shape) == 2:
+                c, t = x.shape
+                dev_anten = c // self.num_sub
+                x = x.reshape(dev_anten, self.num_sub, t)
+        elif self.shape_option == "2d":
+            # If input is already 3D: (dev_anten, sub, Time), flatten it back to 2D
+            if len(x.shape) == 3:
+                d, s, t = x.shape
+                x = x.reshape(d * s, t)
+
+        if self.normalize:
+            if self.norm_type == "minmax":
+                xmin = x.min()
+                xmax = x.max()
+                x = (x - xmin) / (xmax - xmin + 1e-8)
+            elif self.norm_type == "zscore":
+                if self.mean is None or self.std is None:
+                    raise ValueError("mean/std required for zscore")
+                x = (x - self.mean) / (self.std + 1e-8)
+            else:
+                raise ValueError(f"Unknown norm_type {self.norm_type}")
+
+        x = torch.from_numpy(x).float()
+        return x, y
+
+
+# ============================================================
+# Compute XRF55 mean/std
+# ============================================================
+def compute_xrf55_mean_std(root_dir, train_max_rep, shape_option="2d", num_sub=30):
+    """
+    Compute global mean/std for XRF55 using TRAIN split only.
+    """
+    dataset = XRF55Dataset(
+        root_dir=root_dir,
+        split="train",
+        train_max_rep=train_max_rep,
+        shape_option=shape_option,
+        num_sub=num_sub,
+        normalize=False,
+    )
+
+    total_sum = 0.0
+    total_sq = 0.0
+    total_count = 0
+
+    for x, _ in dataset:
+        x = x.numpy()
+        total_sum += x.sum()
+        total_sq += np.square(x).sum()
+        total_count += x.size
+
+    if total_count == 0:
+        return 0.0, 1.0
+
+    mean = total_sum / total_count
+    std = np.sqrt(total_sq / total_count - mean ** 2)
+
+    print(f"XRF55 mean = {mean:.6f}")
+    print(f"XRF55 std  = {std:.6f}")
+
+    return mean, std
+
+
+# ============================================================
 # DataLoader
 # ============================================================
 
@@ -649,9 +803,17 @@ def load_dataset(
     batch_size=DEFAULT_BATCH_SIZE,
     normalize=True,
     norm_type=None,
+    **kwargs
 ):
+    """
+    Added kwargs to support passing specific split definitions 
+    like train_max_rep for XRF55 and shape_option for CNN models.
+    """
 
     name = name.lower()
+    shape_option = kwargs.get("shape_option", "2d")
+    num_sub = kwargs.get("num_sub", 30) # Used for XRF55
+    
     # =======================================================
     # UT_HAR
     # =======================================================
@@ -695,6 +857,7 @@ def load_dataset(
             tmp = SSHAR_ESP_Dataset(
                 root_dir=root_dir,
                 split="train",
+                shape_option=shape_option,
                 normalize=False,
             )
             mean, std = compute_sshar_mean_std(tmp)
@@ -702,6 +865,7 @@ def load_dataset(
         train_dataset = SSHAR_ESP_Dataset(
             root_dir=root_dir,
             split="train",
+            shape_option=shape_option,
             normalize=normalize,
             norm_type=norm_type,
             mean=mean,
@@ -711,6 +875,7 @@ def load_dataset(
         test_dataset = SSHAR_ESP_Dataset(
             root_dir=root_dir,
             split="test",
+            shape_option=shape_option,
             normalize=normalize,
             norm_type=norm_type,
             mean=mean,
@@ -729,6 +894,7 @@ def load_dataset(
             tmp = SSHAR_Nexmon_Dataset(
                 root_dir=root_dir,
                 split="train",
+                shape_option=shape_option,
                 normalize=False,
             )
             mean, std = compute_sshar_mean_std(tmp)
@@ -736,6 +902,7 @@ def load_dataset(
         train_dataset = SSHAR_Nexmon_Dataset(
             root_dir=root_dir,
             split="train",
+            shape_option=shape_option,
             normalize=normalize,
             norm_type=norm_type,
             mean=mean,
@@ -745,36 +912,75 @@ def load_dataset(
         test_dataset = SSHAR_Nexmon_Dataset(
             root_dir=root_dir,
             split="test",
+            shape_option=shape_option,
             normalize=normalize,
             norm_type=norm_type,
             mean=mean,
             std=std,
         )
-    else:
 
+    # =======================================================
+    # XRF55
+    # =======================================================
+    elif name == "xrf55":
+        if norm_type is None:
+            norm_type = "minmax"
+            
+        train_max_rep = kwargs.get("train_max_rep", 16)
+
+        mean = std = None
+        if normalize and norm_type == "zscore":
+            mean, std = compute_xrf55_mean_std(root_dir, train_max_rep, shape_option, num_sub)
+
+        train_dataset = XRF55Dataset(
+            root_dir=root_dir,
+            split="train",
+            train_max_rep=train_max_rep,
+            shape_option=shape_option,
+            num_sub=num_sub,
+            normalize=normalize,
+            norm_type=norm_type,
+            mean=mean,
+            std=std,
+        )
+
+        test_dataset = XRF55Dataset(
+            root_dir=root_dir,
+            split="test",
+            train_max_rep=train_max_rep,
+            shape_option=shape_option,
+            num_sub=num_sub,
+            normalize=normalize,
+            norm_type=norm_type,
+            mean=mean,
+            std=std,
+        )
+
+    else:
         raise ValueError(
             f"Unknown dataset: {name}"
         )
 
     # =======================================================
-
     train_loader, test_loader = create_dataloader(
         train_dataset,
         test_dataset,
         batch_size=batch_size,
     )
 
-    x, y = train_dataset[0]
+    # Handling info extraction
+    if len(train_dataset) > 0:
+        x, y = train_dataset[0]
+        input_shape = tuple(x.shape)
+    else:
+        input_shape = ()
+        
+    num_classes = len(set(train_dataset.y)) if isinstance(train_dataset, UTHARDataset) else len(set(s["label"] for s in train_dataset.samples))
 
     info = {
         "dataset": name,
-        "input_shape": tuple(x.shape),
-        "num_classes": len(
-            set(train_dataset.y)
-        ) if isinstance(train_dataset, UTHARDataset)
-        else len(
-            set(s["label"] for s in train_dataset.samples)
-        ),
+        "input_shape": input_shape,
+        "num_classes": num_classes,
         "train_size": len(train_dataset),
         "test_size": len(test_dataset),
     }
@@ -784,4 +990,3 @@ def load_dataset(
         test_loader,
         info,
     )
-

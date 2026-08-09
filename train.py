@@ -4,13 +4,59 @@ train.py
 Simple training utilities
 """
 
-import torch
-import torch.nn as nn
+import inspect
 import os
 import time
 import pandas as pd
+
 import torch
 import torch.nn as nn
+from torch.optim import lr_scheduler
+
+
+def create_scheduler(optimizer, scheduler_cfg=None):
+    """Create a learning-rate scheduler from a config dict."""
+    if scheduler_cfg is None:
+        return None
+
+    scheduler_name = scheduler_cfg.get("name")
+    if scheduler_name is None or scheduler_name.lower() == "none":
+        return None
+
+    scheduler_args = scheduler_cfg.get("args", {}) or {}
+    scheduler_args = {
+        key: value
+        for key, value in scheduler_args.items()
+        if value is not None
+    }
+
+    scheduler_name = scheduler_name.lower()
+    if scheduler_name == "steplr":
+        return lr_scheduler.StepLR(optimizer, **scheduler_args)
+
+    if scheduler_name == "multisteplr":
+        milestones = scheduler_args.get("milestones")
+        if isinstance(milestones, str):
+            scheduler_args["milestones"] = [
+                int(x)
+                for x in milestones.split(",")
+                if x.strip()
+            ]
+        return lr_scheduler.MultiStepLR(optimizer, **scheduler_args)
+
+    if scheduler_name == "cosineannealinglr":
+        return lr_scheduler.CosineAnnealingLR(optimizer, **scheduler_args)
+
+    if scheduler_name == "reducelronplateau":
+        return lr_scheduler.ReduceLROnPlateau(optimizer, **scheduler_args)
+
+    if scheduler_name == "onecyclelr":
+        return lr_scheduler.OneCycleLR(optimizer, **scheduler_args)
+
+    raise ValueError(
+        f"Unsupported scheduler: {scheduler_name}."
+    )
+
 
 # ============================================================
 # Train one epoch
@@ -130,9 +176,17 @@ def train(
     lr,
     device,
     save_dir,
+    scheduler_cfg=None,
 ):
     """
     Train model.
+
+    Parameters
+    ----------
+    scheduler_cfg : dict or None
+        Optional scheduler configuration dict with keys:
+        - name: scheduler type
+        - args: scheduler arguments
 
     Returns
     -------
@@ -144,11 +198,13 @@ def train(
     os.makedirs(save_dir, exist_ok=True)
 
     model = model.to(device)
+
     criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(
         model.parameters(),
         lr=lr,
     )
+    scheduler = create_scheduler(optimizer, scheduler_cfg)
 
     history = []
 
@@ -202,6 +258,15 @@ def train(
                     "best_model.pth",
                 ),
             )
+
+        if scheduler is not None:
+            if isinstance(
+                scheduler,
+                lr_scheduler.ReduceLROnPlateau,
+            ):
+                scheduler.step(test_loss)
+            else:
+                scheduler.step()
 
     # --------------------------------------------------------
     # Training finished

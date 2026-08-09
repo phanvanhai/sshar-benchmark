@@ -77,6 +77,7 @@ def parse_args():
             "bilstm",
             "vit",
             "resnet18",
+            "resnet1d",
             "cnn_gru",
             "bimamba",
         ],
@@ -100,7 +101,7 @@ def parse_args():
     parser.add_argument(
         "--epochs",
         type=int,
-        default=100,
+        default=200,
     )
 
     parser.add_argument(
@@ -116,6 +117,91 @@ def parse_args():
     )
 
     parser.add_argument(
+        "--scheduler",
+        type=str,
+        default="none",
+        choices=[
+            "none",
+            "steplr",
+            "multisteplr",
+            "cosineannealinglr",
+            "reducelronplateau",
+            "onecyclelr",
+        ],
+        help="Optional learning rate scheduler",
+    )
+
+    parser.add_argument(
+        "--scheduler-step-size",
+        type=int,
+        default=30,
+        help="Step size for StepLR",
+    )
+
+    parser.add_argument(
+        "--scheduler-milestones",
+        type=str,
+        default="",
+        help="Comma-separated milestones for MultiStepLR",
+    )
+
+    parser.add_argument(
+        "--scheduler-gamma",
+        type=float,
+        default=0.1,
+        help="Gamma for scheduler decay",
+    )
+
+    parser.add_argument(
+        "--scheduler-t-max",
+        type=int,
+        default=50,
+        help="T_max for CosineAnnealingLR",
+    )
+
+    parser.add_argument(
+        "--scheduler-eta-min",
+        type=float,
+        default=0.0,
+        help="Eta min for CosineAnnealingLR",
+    )
+
+    parser.add_argument(
+        "--scheduler-patience",
+        type=int,
+        default=10,
+        help="Patience for ReduceLROnPlateau",
+    )
+
+    parser.add_argument(
+        "--scheduler-threshold",
+        type=float,
+        default=1e-4,
+        help="Threshold for ReduceLROnPlateau",
+    )
+
+    parser.add_argument(
+        "--scheduler-max-lr",
+        type=float,
+        default=None,
+        help="Max LR for OneCycleLR",
+    )
+
+    parser.add_argument(
+        "--scheduler-steps-per-epoch",
+        type=int,
+        default=None,
+        help="Steps per epoch for OneCycleLR",
+    )
+
+    parser.add_argument(
+        "--scheduler-total-steps",
+        type=int,
+        default=None,
+        help="Total steps for OneCycleLR",
+    )
+
+    parser.add_argument(
         "--device",
         type=str,
         default="cuda",
@@ -126,6 +212,27 @@ def parse_args():
     )
 
     return parser.parse_args()
+
+
+def get_default_scheduler_cfg(model_name):
+    model_name = model_name.lower()
+    if model_name == "resnet1d":
+        return {
+            "name": "multisteplr",
+            "args": {
+                "milestones": [40, 80, 120, 160],
+                "gamma": 0.5,
+            },
+        }
+    if model_name == "resnet18":
+        return {
+            "name": "steplr",
+            "args": {
+                "step_size": 30,
+                "gamma": 0.1,
+            },
+        }
+    return None
 
 
 # ============================================================
@@ -181,7 +288,26 @@ def main():
         model_name=args.model,
         input_shape=input_shape,
         num_classes=num_classes,
+        dataset=args.dataset,
     )
+
+    scheduler_cfg = get_default_scheduler_cfg(args.model)
+    if args.scheduler and args.scheduler.lower() != "none":
+        scheduler_cfg = {
+            "name": args.scheduler,
+            "args": {
+                "step_size": args.scheduler_step_size,
+                "gamma": args.scheduler_gamma,
+                "milestones": args.scheduler_milestones,
+                "t_max": args.scheduler_t_max,
+                "eta_min": args.scheduler_eta_min,
+                "patience": args.scheduler_patience,
+                "threshold": args.scheduler_threshold,
+                "max_lr": args.scheduler_max_lr,
+                "steps_per_epoch": args.scheduler_steps_per_epoch,
+                "total_steps": args.scheduler_total_steps,
+            },
+        }
 
     # --------------------------------------------------------
     # Result folder
@@ -206,6 +332,7 @@ def main():
         lr=args.lr,
         device=device,
         save_dir=save_dir,
+        scheduler_cfg=scheduler_cfg,
     )
     training_time = time.time() - start_time
     # --------------------------------------------------------
@@ -252,4 +379,4 @@ def main():
 if __name__ == "__main__":
     main()
 
-# python main.py --dataset="ut_har" --model="mlp" --data_root=".\data\" --device="cpu"
+# python main.py --data_root=".\data\" --dataset="ut_har" --model="mlp"
