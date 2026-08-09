@@ -5,3 +5,7 @@ pandas
 matplotlib
 seaborn
 scikit-learn
+scipy
+tqdm
+einops
+timm
