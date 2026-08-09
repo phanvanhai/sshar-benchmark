@@ -265,11 +265,19 @@ def main():
     # --------------------------------------------------------
     # Load dataset
     # --------------------------------------------------------
-    train_loader, test_loader, info = load_dataset(
-        name=args.dataset,
-        root_dir=args.data_root,
-        batch_size=args.batch_size,
-    )
+    if args.model == "cnn_gru":
+        train_loader, test_loader, info = load_dataset(
+                name=args.dataset,
+                root_dir=args.data_root,
+                batch_size=args.batch_size,
+                shape_option="3d"
+            )
+    else:    
+        train_loader, test_loader, info = load_dataset(
+            name=args.dataset,
+            root_dir=args.data_root,
+            batch_size=args.batch_size,
+        )
 
     input_shape = info["input_shape"]
     num_classes = info["num_classes"]
