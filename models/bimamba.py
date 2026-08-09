@@ -29,7 +29,7 @@ def get_bimamba_config(dataset, input_shape, num_classes):
             "kernel_size": 5,
             "groups": 7,
         }
-    elif dataset == "sshar_nexmon":
+    elif dataset == "sshar_asus":
         return {
             "depth": 2,
             "embed_dim": input_shape[0],

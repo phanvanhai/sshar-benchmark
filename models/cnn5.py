@@ -15,7 +15,7 @@ class CNN5(nn.Module):
             input_size = (250, 90)
         elif dataset == "sshar_esp":
             input_size = (250, 168)
-        elif dataset == "sshar_nexmon":
+        elif dataset == "sshar_asus":
             input_size = (250, 672)
         else:
             raise ValueError(

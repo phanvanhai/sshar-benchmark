@@ -63,7 +63,7 @@ def parse_args():
             "ut_har",
             "xrf55",
             "sshar_esp",
-            "sshar_nexmon",
+            "sshar_asus",
         ],
         help="Dataset name",
     )

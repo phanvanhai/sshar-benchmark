@@ -7,7 +7,7 @@ Supported datasets
 ------------------
 1. UT_HAR
 2. SSHAR_ESP
-3. SSHAR_Nexmon
+3. SSHAR_asus
 4. XRF55
 """
 
@@ -257,7 +257,7 @@ class _SSHARDatasetBase(Dataset):
 
     or
 
-        SSHAR_Nexmon_Dataset
+        SSHAR_ASUS_Dataset
     """
 
     pattern = re.compile(
@@ -452,7 +452,7 @@ class _SSHARDatasetBase(Dataset):
         # ESP:
         #   (3,1,56,1000) = (rx, tx, sub, time)
         #
-        # Nexmon:
+        # asus:
         #   (3,4,56,1000) = (rx, tx, sub, time)
         # --------------------------------------------------
         x = np.stack(rx_data)
@@ -550,9 +550,9 @@ class SSHAR_ESP_Dataset(_SSHARDatasetBase):
         )
 
 # ============================================================
-# SSHAR Nexmon
+# SSHAR asus
 # ============================================================
-class SSHAR_Nexmon_Dataset(_SSHARDatasetBase):
+class SSHAR_ASUS_Dataset(_SSHARDatasetBase):
     def __init__(
         self,
         root_dir,
@@ -569,7 +569,7 @@ class SSHAR_Nexmon_Dataset(_SSHARDatasetBase):
     ):
         super().__init__(
             root_dir=root_dir,
-            device="nexmon",
+            device="asus",
             signal=signal,
             split=split,
             shape_option=shape_option,
@@ -593,7 +593,7 @@ def compute_sshar_mean_std(dataset):
 
         SSHAR_ESP_Dataset
         or
-        SSHAR_Nexmon_Dataset
+        SSHAR_ASUS_Dataset
 
         normalize=False
     """
@@ -883,15 +883,15 @@ def load_dataset(
         )
 
     # =======================================================
-    # SSHAR Nexmon
+    # SSHAR asus
     # =======================================================
-    elif name == "sshar_nexmon":
+    elif name == "sshar_asus":
         if norm_type is None:
             norm_type = "zscore"
 
         mean = std = None
         if normalize and norm_type == "zscore":
-            tmp = SSHAR_Nexmon_Dataset(
+            tmp = SSHAR_ASUS_Dataset(
                 root_dir=root_dir,
                 split="train",
                 shape_option=shape_option,
@@ -899,7 +899,7 @@ def load_dataset(
             )
             mean, std = compute_sshar_mean_std(tmp)
 
-        train_dataset = SSHAR_Nexmon_Dataset(
+        train_dataset = SSHAR_ASUS_Dataset(
             root_dir=root_dir,
             split="train",
             shape_option=shape_option,
@@ -909,7 +909,7 @@ def load_dataset(
             std=std,
         )
 
-        test_dataset = SSHAR_Nexmon_Dataset(
+        test_dataset = SSHAR_ASUS_Dataset(
             root_dir=root_dir,
             split="test",
             shape_option=shape_option,
