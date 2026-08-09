@@ -498,18 +498,6 @@ class _SSHARDatasetBase(Dataset):
                 )
 
         x = torch.from_numpy(x).float()
-        
-        # --------------------------------------------------
-        # Temporal pooling
-        #
-        # F.adaptive_max_pool1d operates on the last dimension (time).
-        # It natively handles both (C, L) and (N, C, L) inputs.
-        # 1000 -> 250
-        # --------------------------------------------------
-        x = F.adaptive_max_pool1d(
-            x,
-            output_size=250,
-        )
 
         y = sample["label"]
         return x, y

@@ -27,7 +27,7 @@ def get_bimamba_config(dataset, input_shape, num_classes):
             "in_channels": input_shape[0],
             "out_channels": input_shape[0],
             "kernel_size": 5,
-            "groups": 7,
+            "groups": 12,
         }
     elif dataset == "sshar_asus":
         return {
@@ -38,9 +38,9 @@ def get_bimamba_config(dataset, input_shape, num_classes):
             "in_channels": input_shape[0],
             "out_channels": input_shape[0],
             "kernel_size": 5,
-            "groups": 28,
+            "groups": 24,
         }
-    else:
+    elif dataset == "xrf55":
         return {
             "depth": 2,
             "embed_dim": input_shape[0],
@@ -49,8 +49,12 @@ def get_bimamba_config(dataset, input_shape, num_classes):
             "in_channels": input_shape[0],
             "out_channels": input_shape[0],
             "kernel_size": 5,
-            "groups": 1,
+            "groups": 15,
         }
+    else:
+        raise ValueError(
+            f"Unknown dataset: {name}"
+        )
 
 
 class BiMamba(BaseModel):
