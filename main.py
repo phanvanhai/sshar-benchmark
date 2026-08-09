@@ -61,6 +61,7 @@ def parse_args():
         required=True,
         choices=[
             "ut_har",
+            "xrf55",
             "sshar_esp",
             "sshar_nexmon",
         ],
