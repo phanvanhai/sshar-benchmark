@@ -276,6 +276,7 @@ class _SSHARDatasetBase(Dataset):
         norm_type="zscore",
         mean=None,
         std=None,
+        target_time=None,
         rooms=None,
         subjects=None,
         rx_list=None,
@@ -290,6 +291,7 @@ class _SSHARDatasetBase(Dataset):
         self.norm_type = norm_type
         self.mean = mean
         self.std = std
+        self.target_time = target_time
         # ----------------------------------------
         if rooms is None:
             rooms = scan_folders(
@@ -499,6 +501,9 @@ class _SSHARDatasetBase(Dataset):
 
         x = torch.from_numpy(x).float()
 
+        if self.target_time is not None and x.ndim in (2, 3) and x.shape[-1] != self.target_time:
+            x = F.adaptive_max_pool1d(x, output_size=self.target_time)
+
         y = sample["label"]
         return x, y
 
@@ -518,6 +523,7 @@ class SSHAR_ESP_Dataset(_SSHARDatasetBase):
         norm_type="zscore",
         mean=None,
         std=None,
+        target_time=None,
         rooms=None,
         subjects=None,
         rx_list=None,
@@ -532,6 +538,7 @@ class SSHAR_ESP_Dataset(_SSHARDatasetBase):
             norm_type=norm_type,
             mean=mean,
             std=std,
+            target_time=target_time,
             rooms=rooms,
             subjects=subjects,
             rx_list=rx_list,
@@ -551,6 +558,7 @@ class SSHAR_ASUS_Dataset(_SSHARDatasetBase):
         norm_type="zscore",
         mean=None,
         std=None,
+        target_time=None,
         rooms=None,
         subjects=None,
         rx_list=None,
@@ -565,6 +573,7 @@ class SSHAR_ASUS_Dataset(_SSHARDatasetBase):
             norm_type=norm_type,
             mean=mean,
             std=std,
+            target_time=target_time,
             rooms=rooms,
             subjects=subjects,
             rx_list=rx_list,
@@ -634,6 +643,7 @@ class XRF55Dataset(Dataset):
         norm_type="minmax",
         mean=None,
         std=None,
+        target_time=None,
     ):
         self.root_dir = Path(root_dir)
         self.split = split
@@ -644,6 +654,7 @@ class XRF55Dataset(Dataset):
         self.norm_type = norm_type
         self.mean = mean
         self.std = std
+        self.target_time = target_time
 
         self.samples = []
         self.build_index()
@@ -710,13 +721,17 @@ class XRF55Dataset(Dataset):
                 raise ValueError(f"Unknown norm_type {self.norm_type}")
 
         x = torch.from_numpy(x).float()
+
+        if self.target_time is not None and x.ndim in (2, 3) and x.shape[-1] != self.target_time:
+            x = F.adaptive_max_pool1d(x, output_size=self.target_time)
+
         return x, y
 
 
 # ============================================================
 # Compute XRF55 mean/std
 # ============================================================
-def compute_xrf55_mean_std(root_dir, train_max_rep, shape_option="2d", num_sub=30):
+def compute_xrf55_mean_std(root_dir, train_max_rep, shape_option="2d", num_sub=30, target_time=None):
     """
     Compute global mean/std for XRF55 using TRAIN split only.
     """
@@ -727,6 +742,7 @@ def compute_xrf55_mean_std(root_dir, train_max_rep, shape_option="2d", num_sub=3
         shape_option=shape_option,
         num_sub=num_sub,
         normalize=False,
+        target_time=target_time,
     )
 
     total_sum = 0.0
@@ -795,12 +811,13 @@ def load_dataset(
 ):
     """
     Added kwargs to support passing specific split definitions 
-    like train_max_rep for XRF55 and shape_option for CNN models.
+    like train_max_rep for XRF55, shape_option for CNN models, and target_time for bimamba.
     """
 
     name = name.lower()
     shape_option = kwargs.get("shape_option", "2d")
     num_sub = kwargs.get("num_sub", 30) # Used for XRF55
+    target_time = kwargs.get("target_time", None)
     
     # =======================================================
     # UT_HAR
@@ -847,6 +864,7 @@ def load_dataset(
                 split="train",
                 shape_option=shape_option,
                 normalize=False,
+                target_time=target_time,
             )
             mean, std = compute_sshar_mean_std(tmp)
 
@@ -858,6 +876,7 @@ def load_dataset(
             norm_type=norm_type,
             mean=mean,
             std=std,
+            target_time=target_time,
         )
 
         test_dataset = SSHAR_ESP_Dataset(
@@ -868,6 +887,7 @@ def load_dataset(
             norm_type=norm_type,
             mean=mean,
             std=std,
+            target_time=target_time,
         )
 
     # =======================================================
@@ -884,6 +904,7 @@ def load_dataset(
                 split="train",
                 shape_option=shape_option,
                 normalize=False,
+                target_time=target_time,
             )
             mean, std = compute_sshar_mean_std(tmp)
 
@@ -895,6 +916,7 @@ def load_dataset(
             norm_type=norm_type,
             mean=mean,
             std=std,
+            target_time=target_time,
         )
 
         test_dataset = SSHAR_ASUS_Dataset(
@@ -905,6 +927,7 @@ def load_dataset(
             norm_type=norm_type,
             mean=mean,
             std=std,
+            target_time=target_time,
         )
 
     # =======================================================
@@ -918,7 +941,7 @@ def load_dataset(
 
         mean = std = None
         if normalize and norm_type == "zscore":
-            mean, std = compute_xrf55_mean_std(root_dir, train_max_rep, shape_option, num_sub)
+            mean, std = compute_xrf55_mean_std(root_dir, train_max_rep, shape_option, num_sub, target_time)
 
         train_dataset = XRF55Dataset(
             root_dir=root_dir,
@@ -930,6 +953,7 @@ def load_dataset(
             norm_type=norm_type,
             mean=mean,
             std=std,
+            target_time=target_time,
         )
 
         test_dataset = XRF55Dataset(
@@ -942,6 +966,7 @@ def load_dataset(
             norm_type=norm_type,
             mean=mean,
             std=std,
+            target_time=target_time,
         )
 
     else:

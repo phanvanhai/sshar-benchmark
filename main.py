@@ -265,18 +265,24 @@ def main():
     # --------------------------------------------------------
     # Load dataset
     # --------------------------------------------------------
+    dataset_kwargs = {}
+    if args.model == "bimamba":
+        dataset_kwargs["target_time"] = 250
+
     if args.model == "cnn_gru":
-        train_loader, test_loader, info = load_dataset(
-                name=args.dataset,
-                root_dir=args.data_root,
-                batch_size=args.batch_size,
-                shape_option="3d"
-            )
-    else:    
         train_loader, test_loader, info = load_dataset(
             name=args.dataset,
             root_dir=args.data_root,
             batch_size=args.batch_size,
+            shape_option="3d",
+            **dataset_kwargs,
+        )
+    else:
+        train_loader, test_loader, info = load_dataset(
+            name=args.dataset,
+            root_dir=args.data_root,
+            batch_size=args.batch_size,
+            **dataset_kwargs,
         )
 
     input_shape = info["input_shape"]

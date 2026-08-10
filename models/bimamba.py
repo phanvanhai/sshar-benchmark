@@ -1,4 +1,5 @@
 import torch.nn as nn
+import torch.nn.functional as F
 
 from .base import BaseModel
 from .bidirectional_mamba import FusionModel
