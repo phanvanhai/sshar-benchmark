@@ -53,7 +53,7 @@ def get_bimamba_config(dataset, input_shape, num_classes):
         }
     else:
         raise ValueError(
-            f"Unknown dataset: {name}"
+            f"Unknown dataset: {dataset}"
         )
 
 
@@ -79,6 +79,10 @@ class BiMamba(BaseModel):
         self.model = FusionModel(**config)
 
     def forward(self, x):
-        if x.ndim == 3 and x.shape[1] == self.input_shape[0]:
+        if (
+            x.ndim == 3
+            and x.shape[1] == self.input_shape[1]
+            and x.shape[2] == self.input_shape[0]
+        ):
             x = x.transpose(1, 2)
         return self.model(x)
