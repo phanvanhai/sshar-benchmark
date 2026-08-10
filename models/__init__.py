@@ -7,6 +7,7 @@ from .resnet1d import resnet18_1d
 from .bilstm import BiLSTM
 from .vit import ViT
 from .cnn_gru import CNN_GRU
+from .bimamba import BiMamba
 
 SUPPORTED_MODELS = [
     "mlp",
