@@ -78,7 +78,6 @@ def get_model(model_name, input_shape, num_classes, **kwargs):
         return BiMamba(
             input_shape=input_shape,
             num_classes=num_classes,
-            dataset=kwargs.get("dataset"),
             **kwargs,
         )
 
