@@ -33,7 +33,18 @@ DEFAULT_BATCH_SIZE = 32
 DEFAULT_NUM_WORKERS = 0
 DEFAULT_PIN_MEMORY = True
 
+INTEL_30_SUBCARRIERS = [
+    -28, -26, -24, -22, -20, -18, -16, -14,
+    -12, -10, -8, -6, -4, -2,
+    -1, 1, 3, 5, 7, 9, 11, 13,
+    15, 17, 19, 21, 23, 25, 27, 28
+]
 
+# Map signed subcarrier -> index 0..55
+INTEL_30_INDICES = [
+    sc + 28 if sc < 0 else sc + 27
+    for sc in INTEL_30_SUBCARRIERS
+]
 # ============================================================
 # Utility
 # ============================================================
@@ -280,6 +291,7 @@ class _SSHARDatasetBase(Dataset):
         rooms=None,
         subjects=None,
         rx_list=None,
+        intel_shape=False,
     ):
 
         self.root_dir = Path(root_dir)
@@ -292,6 +304,7 @@ class _SSHARDatasetBase(Dataset):
         self.mean = mean
         self.std = std
         self.target_time = target_time
+        self.intel_shape = intel_shape
         # ----------------------------------------
         if rooms is None:
             rooms = scan_folders(
@@ -452,25 +465,55 @@ class _SSHARDatasetBase(Dataset):
         # Stack RX
         #
         # ESP:
-        #   (3,1,56,1000) = (rx, tx, sub, time)
+        #   (3, 1, 56, T)
         #
-        # asus:
-        #   (3,4,56,1000) = (rx, tx, sub, time)
+        # ASUS:
+        #   (3, 4, 56, T)
         # --------------------------------------------------
         x = np.stack(rx_data)
 
+        # ============================================================
+        # Intel shape
+        # ============================================================
+        if self.intel_shape:
+            # Select antennas
+            if self.device == "esp":
+                # ESP32: 1 antenna
+                antenna_indices = [0]
+            elif self.device == "asus":
+                # ASUS: keep antenna 0, 1, 3
+                antenna_indices = [0, 1, 3]
+            else:
+                raise ValueError(
+                    f"Unknown device: {self.device}"
+                )
+            x = x[:, antenna_indices, :, :]
+            # Select 30 Intel-like subcarriers
+            x = x[:, :, INTEL_30_INDICES, :]
+
         # --------------------------------------------------
-        # Merge RX + antenna based on shape_option
+        # Shape
         # --------------------------------------------------
         if self.shape_option == "2d":
-            # Flatten everything except time: (rx*tx*sub, time)
-            x = x.reshape(-1, x.shape[-1])
+            # (rx, antenna, sub, time)
+            # -> (rx * antenna * sub, time)
+            x = x.reshape(
+                -1,
+                x.shape[-1]
+            )
         elif self.shape_option == "3d":
-            # Keep subcarriers as separate dimension: (rx*tx, sub, time)
-            rx, tx, sub, time_len = x.shape
-            x = x.reshape(rx * tx, sub, time_len)
+            # (rx, antenna, sub, time)
+            # -> (rx * antenna, sub, time)
+            rx, antenna, sub, time_len = x.shape
+            x = x.reshape(
+                rx * antenna,
+                sub,
+                time_len
+            )
         else:
-            raise ValueError(f"Unknown shape_option: {self.shape_option}")
+            raise ValueError(
+                f"Unknown shape_option: {self.shape_option}"
+            )
 
         # --------------------------------------------------
         # Normalization
@@ -527,6 +570,7 @@ class SSHAR_ESP_Dataset(_SSHARDatasetBase):
         rooms=None,
         subjects=None,
         rx_list=None,
+        intel_shape=False,
     ):
         super().__init__(
             root_dir=root_dir,
@@ -542,6 +586,7 @@ class SSHAR_ESP_Dataset(_SSHARDatasetBase):
             rooms=rooms,
             subjects=subjects,
             rx_list=rx_list,
+            intel_shape=intel_shape,
         )
 
 # ============================================================
@@ -562,6 +607,7 @@ class SSHAR_ASUS_Dataset(_SSHARDatasetBase):
         rooms=None,
         subjects=None,
         rx_list=None,
+        intel_shape=False,
     ):
         super().__init__(
             root_dir=root_dir,
@@ -577,6 +623,7 @@ class SSHAR_ASUS_Dataset(_SSHARDatasetBase):
             rooms=rooms,
             subjects=subjects,
             rx_list=rx_list,
+            intel_shape=intel_shape,
         )
 
 # ============================================================
@@ -700,6 +747,7 @@ class XRF55Dataset(Dataset):
             # Assuming raw input is 2D: (C, Time) where C = dev_anten * num_sub
             if len(x.shape) == 2:
                 c, t = x.shape
+                assert c % self.num_sub == 0
                 dev_anten = c // self.num_sub
                 x = x.reshape(dev_anten, self.num_sub, t)
         elif self.shape_option == "2d":
@@ -818,6 +866,7 @@ def load_dataset(
     shape_option = kwargs.get("shape_option", "2d")
     num_sub = kwargs.get("num_sub", 30) # Used for XRF55
     target_time = kwargs.get("target_time", None)
+    intel_shape = kwargs.get("intel_shape", False)
     
     # =======================================================
     # UT_HAR
@@ -865,6 +914,7 @@ def load_dataset(
                 shape_option=shape_option,
                 normalize=False,
                 target_time=target_time,
+                intel_shape=intel_shape,
             )
             mean, std = compute_sshar_mean_std(tmp)
 
@@ -877,6 +927,7 @@ def load_dataset(
             mean=mean,
             std=std,
             target_time=target_time,
+            intel_shape=intel_shape,
         )
 
         test_dataset = SSHAR_ESP_Dataset(
@@ -888,6 +939,7 @@ def load_dataset(
             mean=mean,
             std=std,
             target_time=target_time,
+            intel_shape=intel_shape,
         )
 
     # =======================================================
@@ -905,6 +957,7 @@ def load_dataset(
                 shape_option=shape_option,
                 normalize=False,
                 target_time=target_time,
+                intel_shape=intel_shape,
             )
             mean, std = compute_sshar_mean_std(tmp)
 
@@ -917,6 +970,7 @@ def load_dataset(
             mean=mean,
             std=std,
             target_time=target_time,
+            intel_shape=intel_shape,
         )
 
         test_dataset = SSHAR_ASUS_Dataset(
@@ -928,6 +982,7 @@ def load_dataset(
             mean=mean,
             std=std,
             target_time=target_time,
+            intel_shape=intel_shape,
         )
 
     # =======================================================

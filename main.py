@@ -275,6 +275,7 @@ def main():
             root_dir=args.data_root,
             batch_size=args.batch_size,
             shape_option="3d",
+            intel_shape=True,
             **dataset_kwargs,
         )
     else:
@@ -282,6 +283,7 @@ def main():
             name=args.dataset,
             root_dir=args.data_root,
             batch_size=args.batch_size,
+            intel_shape=True,
             **dataset_kwargs,
         )
 
