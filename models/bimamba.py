@@ -28,7 +28,7 @@ def get_bimamba_config(dataset, input_shape, num_classes):
             "in_channels": input_shape[0],
             "out_channels": input_shape[0],
             "kernel_size": 5,
-            "groups": 12,
+            "groups": 6,
         }
     elif dataset == "sshar_asus":
         return {
@@ -50,7 +50,7 @@ def get_bimamba_config(dataset, input_shape, num_classes):
             "in_channels": input_shape[0],
             "out_channels": input_shape[0],
             "kernel_size": 5,
-            "groups": 15,
+            "groups": 9,
         }
     else:
         raise ValueError(
