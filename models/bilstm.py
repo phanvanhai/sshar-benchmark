@@ -34,9 +34,8 @@ class BiLSTM(BaseModel):
 
     def forward(self, x):
         # Dataset format: (B, C, T) = (B, 90, 250)
-        # Convert to LSTM format: (T, B, C) = (250, B, 90)
-        x = x.permute(0, 2, 1)
-        x = x.permute(1, 0, 2)
+        # LSTM expects: (T, B, C) = (250, B, 90)
+        x = x.permute(2, 0, 1)
 
         _, (ht, _) = self.lstm(x)
 
