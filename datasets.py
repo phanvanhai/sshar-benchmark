@@ -33,6 +33,13 @@ DEFAULT_BATCH_SIZE = 32
 DEFAULT_NUM_WORKERS = 0
 DEFAULT_PIN_MEMORY = True
 
+# Keep only the requested classes in the benchmark.
+# Labels are remapped to contiguous indices 0..5 for PyTorch.
+DEFAULT_SELECTED_LABELS = (1, 2, 3, 4, 5, 6, 7, 8)
+DEFAULT_LABEL_MAP = {
+    label: idx for idx, label in enumerate(DEFAULT_SELECTED_LABELS)
+}
+
 INTEL_30_SUBCARRIERS = [
     -28, -26, -24, -22, -20, -18, -16, -14,
     -12, -10, -8, -6, -4, -2,
@@ -292,6 +299,7 @@ class _SSHARDatasetBase(Dataset):
         subjects=None,
         rx_list=None,
         intel_shape=False,
+        allowed_labels=None,
     ):
 
         self.root_dir = Path(root_dir)
@@ -305,6 +313,8 @@ class _SSHARDatasetBase(Dataset):
         self.std = std
         self.target_time = target_time
         self.intel_shape = intel_shape
+        self.allowed_labels = tuple(DEFAULT_SELECTED_LABELS) if allowed_labels is None else tuple(allowed_labels)
+        self.label_map = {label: idx for idx, label in enumerate(self.allowed_labels)}
         # ----------------------------------------
         if rooms is None:
             rooms = scan_folders(
@@ -409,6 +419,10 @@ class _SSHARDatasetBase(Dataset):
                     pos = int(m.group(2))
                     direction = int(m.group(3))
                     rep = int(m.group(4))
+
+                    if act not in self.label_map:
+                        continue
+
                     train = (
                         rep <= 8
                         if direction == 0
@@ -441,7 +455,7 @@ class _SSHARDatasetBase(Dataset):
 
                     self.samples.append(
                         {
-                            "label": act - 1,
+                            "label": self.label_map[act],
                             "room": room,
                             "subject": subject,
                             "files": rx_files,
@@ -482,7 +496,7 @@ class _SSHARDatasetBase(Dataset):
                 antenna_indices = [0]
             elif self.device == "asus":
                 # ASUS: keep antenna 0, 1, 3
-                antenna_indices = [0]
+                antenna_indices = [0,1]
             else:
                 raise ValueError(
                     f"Unknown device: {self.device}"
@@ -571,6 +585,7 @@ class SSHAR_ESP_Dataset(_SSHARDatasetBase):
         subjects=None,
         rx_list=None,
         intel_shape=False,
+        allowed_labels=None,
     ):
         super().__init__(
             root_dir=root_dir,
@@ -587,6 +602,7 @@ class SSHAR_ESP_Dataset(_SSHARDatasetBase):
             subjects=subjects,
             rx_list=rx_list,
             intel_shape=intel_shape,
+            allowed_labels=allowed_labels,
         )
 
 # ============================================================
@@ -608,6 +624,7 @@ class SSHAR_ASUS_Dataset(_SSHARDatasetBase):
         subjects=None,
         rx_list=None,
         intel_shape=False,
+        allowed_labels=None,
     ):
         super().__init__(
             root_dir=root_dir,
@@ -624,6 +641,7 @@ class SSHAR_ASUS_Dataset(_SSHARDatasetBase):
             subjects=subjects,
             rx_list=rx_list,
             intel_shape=intel_shape,
+            allowed_labels=allowed_labels,
         )
 
 # ============================================================
@@ -691,6 +709,7 @@ class XRF55Dataset(Dataset):
         mean=None,
         std=None,
         target_time=None,
+        allowed_labels=None,
     ):
         self.root_dir = Path(root_dir)
         self.split = split
@@ -702,6 +721,8 @@ class XRF55Dataset(Dataset):
         self.mean = mean
         self.std = std
         self.target_time = target_time
+        self.allowed_labels = tuple(DEFAULT_SELECTED_LABELS) if allowed_labels is None else tuple(allowed_labels)
+        self.label_map = {label: idx for idx, label in enumerate(self.allowed_labels)}
 
         self.samples = []
         self.build_index()
@@ -718,6 +739,10 @@ class XRF55Dataset(Dataset):
                 user_id, action_id, rep_id = name_parts
                 rep_num = int(rep_id)
                 
+                action_id_int = int(action_id)
+                if action_id_int not in self.label_map:
+                    continue
+
                 is_train = rep_num <= self.train_max_rep
                 is_test = rep_num > self.train_max_rep
 
@@ -726,9 +751,9 @@ class XRF55Dataset(Dataset):
                 if self.split == "test" and not is_test:
                     continue
 
-                # Pytorch requires labels starting at 0
-                label = int(action_id) - 1 
-                
+                # Remap selected labels to contiguous indices 0..5.
+                label = self.label_map[action_id_int]
+
                 self.samples.append({
                     "path": str(file_path),
                     "label": label
@@ -867,7 +892,8 @@ def load_dataset(
     num_sub = kwargs.get("num_sub", 30) # Used for XRF55
     target_time = kwargs.get("target_time", None)
     intel_shape = kwargs.get("intel_shape", False)
-    
+    allowed_labels = kwargs.get("allowed_labels", DEFAULT_SELECTED_LABELS)
+
     # =======================================================
     # UT_HAR
     # =======================================================
@@ -928,6 +954,7 @@ def load_dataset(
             std=std,
             target_time=target_time,
             intel_shape=intel_shape,
+            allowed_labels=allowed_labels,
         )
 
         test_dataset = SSHAR_ESP_Dataset(
@@ -940,6 +967,7 @@ def load_dataset(
             std=std,
             target_time=target_time,
             intel_shape=intel_shape,
+            allowed_labels=allowed_labels,
         )
 
     # =======================================================
@@ -971,6 +999,7 @@ def load_dataset(
             std=std,
             target_time=target_time,
             intel_shape=intel_shape,
+            allowed_labels=allowed_labels,
         )
 
         test_dataset = SSHAR_ASUS_Dataset(
@@ -983,6 +1012,7 @@ def load_dataset(
             std=std,
             target_time=target_time,
             intel_shape=intel_shape,
+            allowed_labels=allowed_labels,
         )
 
     # =======================================================
@@ -1009,6 +1039,7 @@ def load_dataset(
             mean=mean,
             std=std,
             target_time=target_time,
+            allowed_labels=allowed_labels,
         )
 
         test_dataset = XRF55Dataset(
@@ -1022,6 +1053,7 @@ def load_dataset(
             mean=mean,
             std=std,
             target_time=target_time,
+            allowed_labels=allowed_labels,
         )
 
     else:
