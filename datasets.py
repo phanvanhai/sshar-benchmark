@@ -425,7 +425,7 @@ class _SSHARDatasetBase(Dataset):
                     train = subject in ["subject_01", "subject_02", "subject_03", "subject_04", "subject_09", "subject_10", "subject_11", "subject_12"]
                     # Chia theo so lan lap                
                     # train = (rep <= 8 if direction == 0 else rep <= 4)
-                    
+
                     if (self.split == "train" and not train):
                         continue
                     if (self.split == "test" and train ):
@@ -734,7 +734,8 @@ class XRF55Dataset(Dataset):
                     continue
 
                 # Chia theo nguoi
-                is_train = user_id <= 24
+                user_num = int(user_id)
+                is_train = user_num <= 24
                 # Chia theo so lan lap                
                 # is_train = rep_num <= self.train_max_rep
 
