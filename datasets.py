@@ -386,7 +386,6 @@ class _SSHARDatasetBase(Dataset):
         }
         """
         self.samples.clear()
-
         for room in self.rooms:
             for subject in self.subjects:
                 folder = (
@@ -411,7 +410,6 @@ class _SSHARDatasetBase(Dataset):
                     m = self.pattern.search(
                         file.name
                     )
-
                     if m is None:
                         continue
 
@@ -423,22 +421,14 @@ class _SSHARDatasetBase(Dataset):
                     if act not in self.label_map:
                         continue
 
-                    train = (
-                        rep <= 8
-                        if direction == 0
-                        else rep <= 4
-                    )
-
-                    if (
-                        self.split == "train"
-                        and not train
-                    ):
+                    # Chia theo nguoi
+                    train = subject in ["subject_01", "subject_02", "subject_03", "subject_04", "subject_09", "subject_10", "subject_11", "subject_12"]
+                    # Chia theo so lan lap                
+                    # train = (rep <= 8 if direction == 0 else rep <= 4)
+                    
+                    if (self.split == "train" and not train):
                         continue
-
-                    if (
-                        self.split == "test"
-                        and train
-                    ):
+                    if (self.split == "test" and train ):
                         continue
 
                     rx_files = []
@@ -496,7 +486,7 @@ class _SSHARDatasetBase(Dataset):
                 antenna_indices = [0]
             elif self.device == "asus":
                 # ASUS: keep antenna 0, 1, 3
-                antenna_indices = [0,1,3]
+                antenna_indices = [0,1,2,3]
             else:
                 raise ValueError(
                     f"Unknown device: {self.device}"
@@ -743,12 +733,14 @@ class XRF55Dataset(Dataset):
                 if action_id_int not in self.label_map:
                     continue
 
-                is_train = rep_num <= self.train_max_rep
-                is_test = rep_num > self.train_max_rep
+                # Chia theo nguoi
+                is_train = user_id <= 24
+                # Chia theo so lan lap                
+                # is_train = rep_num <= self.train_max_rep
 
                 if self.split == "train" and not is_train:
                     continue
-                if self.split == "test" and not is_test:
+                if self.split == "test" and is_train:
                     continue
 
                 # Remap selected labels to contiguous indices 0..5.
