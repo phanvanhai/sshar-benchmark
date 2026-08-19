@@ -496,7 +496,7 @@ class _SSHARDatasetBase(Dataset):
                 antenna_indices = [0]
             elif self.device == "asus":
                 # ASUS: keep antenna 0, 1, 3
-                antenna_indices = [0,1]
+                antenna_indices = [0,1,3]
             else:
                 raise ValueError(
                     f"Unknown device: {self.device}"
