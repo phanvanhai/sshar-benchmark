@@ -56,6 +56,43 @@ class BasicBlock(nn.Module):
         return out
 
 
+class Bottleneck(nn.Module):
+    expansion = 4
+
+    def __init__(self, inplanes, planes, stride=1, group=1, downsample=None):
+        super(Bottleneck, self).__init__()
+        self.conv1 = conv1x1(inplanes, planes, group=group)
+        self.bn1 = nn.BatchNorm1d(planes)
+        self.conv2 = conv3x3(planes, planes, stride, group=group)
+        self.bn2 = nn.BatchNorm1d(planes)
+        self.conv3 = conv1x1(planes, planes * self.expansion, group=group)
+        self.bn3 = nn.BatchNorm1d(planes * self.expansion)
+        self.relu = nn.ReLU(inplace=True)
+        self.downsample = downsample
+        self.stride = stride
+
+    def forward(self, x):
+        identity = x
+
+        out = self.conv1(x)
+        out = self.bn1(out)
+        out = self.relu(out)
+
+        out = self.conv2(out)
+        out = self.bn2(out)
+        out = self.relu(out)
+
+        out = self.conv3(out)
+        out = self.bn3(out)
+
+        if self.downsample is not None:
+            identity = self.downsample(x)
+
+        out += identity
+        out = self.relu(out)
+        return out
+
+
 class ResNet1D(nn.Module):
     def __init__(self, block, layers, inchannel=270, num_classes=55):
         super(ResNet1D, self).__init__()
@@ -119,19 +156,12 @@ class ResNet1D(nn.Module):
         x = self.conv1(x)
         x = self.bn1(x)
         x = self.relu(x)
-        x = self.conv2(x)
-        x = self.bn2(x)
-        x = self.relu(x)
-        x = self.conv3(x)
-        x = self.bn3(x)
-        x = self.relu(x)
         x = self.maxpool(x)
 
         x = self.layer1(x)
         x = self.layer2(x)
         x = self.layer3(x)
         x = self.layer4(x)
-        x = self.conv4(x)
 
         output = self.avg_pool(x)
         output = output.view(output.size(0), -1)
