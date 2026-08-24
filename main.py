@@ -212,6 +212,14 @@ def parse_args():
         ],
     )
 
+    parser.add_argument(
+            "--case_split",
+            type=int,
+            default=0,
+            choices=[0, 1, 2, 3, 4],
+            help="case split from 0 to 4"
+        )
+
     return parser.parse_args()
 
 
@@ -266,6 +274,8 @@ def main():
     # Load dataset
     # --------------------------------------------------------
     dataset_kwargs = {}
+    dataset_kwargs["case_split"] = args.case_split
+
     if args.model == "bimamba":
         dataset_kwargs["target_time"] = 250
 
@@ -396,4 +406,4 @@ def main():
 if __name__ == "__main__":
     main()
 
-# python main.py --data_root=".\data\" --dataset="ut_har" --model="mlp"
+# python main.py --data_root=".\data\" --dataset="ut_har" --model="mlp" --case_split=0

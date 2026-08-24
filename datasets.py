@@ -52,6 +52,23 @@ INTEL_30_INDICES = [
     sc + 28 if sc < 0 else sc + 27
     for sc in INTEL_30_SUBCARRIERS
 ]
+
+USER_CASES = {
+    "xrf55": [
+        list(range(1, 25)),
+        [1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15, 16, 18, 19, 21, 23, 24, 25, 27, 28, 29, 30],
+        [1, 2, 4, 5, 6, 7, 8, 9, 10, 13, 14, 16, 17, 18, 19, 20, 22, 23, 24, 25, 26, 27, 28, 29],
+        [1, 2, 4, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 18, 19, 22, 23, 24, 25, 26, 27, 28, 29],
+        [1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 13, 14, 15, 16, 17, 18, 19, 21, 23, 24, 25, 26, 29, 30]
+    ],
+    "sshar": [
+        list(range(1, 9)),
+        [2, 3, 4, 5, 6, 7, 8, 9],
+        [1, 2, 3, 4, 5, 7, 9, 10],
+        [1, 2, 3, 5, 6, 8, 9, 10],
+        [1, 2, 3, 5, 6, 7, 8, 10]
+    ]
+}
 # ============================================================
 # Utility
 # ============================================================
@@ -289,6 +306,7 @@ class _SSHARDatasetBase(Dataset):
         device,
         signal="amp",
         split="train",
+        case_split = 0,
         shape_option="2d",
         normalize=True,
         norm_type="zscore",
@@ -306,6 +324,7 @@ class _SSHARDatasetBase(Dataset):
         self.device = device
         self.signal = signal
         self.split = split
+        self.case_split = case_split,
         self.shape_option = shape_option
         self.normalize = normalize
         self.norm_type = norm_type
@@ -422,13 +441,14 @@ class _SSHARDatasetBase(Dataset):
                         continue
 
                     # Chia theo nguoi
-                    train = subject in ["subject_01", "subject_02", "subject_03", "subject_04", "subject_09", "subject_10", "subject_11", "subject_12"]
-                    # Chia theo so lan lap                
-                    # train = (rep <= 8 if direction == 0 else rep <= 4)
+                    user_num = int(subject.split("_")[1])
+                    is_train = user_num in USER_CASES["sshar"][self.case_split]
+                    # Chia theo so lan lap
+                    # is_train = (rep <= 8 if direction == 0 else rep <= 4)
 
-                    if (self.split == "train" and not train):
+                    if (self.split == "train" and not is_train):
                         continue
-                    if (self.split == "test" and train ):
+                    if (self.split == "test" and is_train ):
                         continue
 
                     rx_files = []
@@ -486,7 +506,7 @@ class _SSHARDatasetBase(Dataset):
                 antenna_indices = [0]
             elif self.device == "asus":
                 # ASUS: keep antenna 0, 1, 3
-                antenna_indices = [0,1,3]
+                antenna_indices = [0,1,2,3]
             else:
                 raise ValueError(
                     f"Unknown device: {self.device}"
@@ -565,6 +585,7 @@ class SSHAR_ESP_Dataset(_SSHARDatasetBase):
         root_dir,
         signal="amp",
         split="train",
+        case_split = 0,
         shape_option="2d",
         normalize=True,
         norm_type="zscore",
@@ -582,6 +603,7 @@ class SSHAR_ESP_Dataset(_SSHARDatasetBase):
             device="esp",
             signal=signal,
             split=split,
+            case_split = case_split,
             shape_option=shape_option,
             normalize=normalize,
             norm_type=norm_type,
@@ -604,6 +626,7 @@ class SSHAR_ASUS_Dataset(_SSHARDatasetBase):
         root_dir,
         signal="amp",
         split="train",
+        case_split = 0,
         shape_option="2d",
         normalize=True,
         norm_type="zscore",
@@ -621,6 +644,7 @@ class SSHAR_ASUS_Dataset(_SSHARDatasetBase):
             device="asus",
             signal=signal,
             split=split,
+            case_split = case_split,
             shape_option=shape_option,
             normalize=normalize,
             norm_type=norm_type,
@@ -691,7 +715,7 @@ class XRF55Dataset(Dataset):
         self,
         root_dir,
         split="train",
-        train_max_rep=16,
+        case_split=0,
         shape_option="2d",
         num_sub=30,  # XRF55 typically uses Intel 5300 with 30 subcarriers per antenna
         normalize=True,
@@ -703,7 +727,7 @@ class XRF55Dataset(Dataset):
     ):
         self.root_dir = Path(root_dir)
         self.split = split
-        self.train_max_rep = train_max_rep
+        self.case_split = case_split
         self.shape_option = shape_option
         self.num_sub = num_sub
         self.normalize = normalize
@@ -735,9 +759,10 @@ class XRF55Dataset(Dataset):
 
                 # Chia theo nguoi
                 user_num = int(user_id)
-                is_train = user_num <= 24
+                is_train = user_num in USER_CASES["xrf55"][self.case_split]
+                # is_train = user_num <= 24
                 # Chia theo so lan lap                
-                # is_train = rep_num <= self.train_max_rep
+                # is_train = rep_num <= 16
 
                 if self.split == "train" and not is_train:
                     continue
@@ -797,14 +822,14 @@ class XRF55Dataset(Dataset):
 # ============================================================
 # Compute XRF55 mean/std
 # ============================================================
-def compute_xrf55_mean_std(root_dir, train_max_rep, shape_option="2d", num_sub=30, target_time=None):
+def compute_xrf55_mean_std(root_dir, case_split, shape_option="2d", num_sub=30, target_time=None):
     """
     Compute global mean/std for XRF55 using TRAIN split only.
     """
     dataset = XRF55Dataset(
         root_dir=root_dir,
         split="train",
-        train_max_rep=train_max_rep,
+        case_split=case_split,
         shape_option=shape_option,
         num_sub=num_sub,
         normalize=False,
@@ -877,7 +902,7 @@ def load_dataset(
 ):
     """
     Added kwargs to support passing specific split definitions 
-    like train_max_rep for XRF55, shape_option for CNN models, and target_time for bimamba.
+    like case_split for XRF55, shape_option for CNN models, and target_time for bimamba.
     """
 
     name = name.lower()
@@ -886,6 +911,7 @@ def load_dataset(
     target_time = kwargs.get("target_time", None)
     intel_shape = kwargs.get("intel_shape", False)
     allowed_labels = kwargs.get("allowed_labels", DEFAULT_SELECTED_LABELS)
+    case_split = kwargs.get("case_split", 0)
 
     # =======================================================
     # UT_HAR
@@ -930,6 +956,7 @@ def load_dataset(
             tmp = SSHAR_ESP_Dataset(
                 root_dir=root_dir,
                 split="train",
+                case_split=case_split,
                 shape_option=shape_option,
                 normalize=False,
                 target_time=target_time,
@@ -940,6 +967,7 @@ def load_dataset(
         train_dataset = SSHAR_ESP_Dataset(
             root_dir=root_dir,
             split="train",
+            case_split=case_split,
             shape_option=shape_option,
             normalize=normalize,
             norm_type=norm_type,
@@ -953,6 +981,7 @@ def load_dataset(
         test_dataset = SSHAR_ESP_Dataset(
             root_dir=root_dir,
             split="test",
+            case_split=case_split,
             shape_option=shape_option,
             normalize=normalize,
             norm_type=norm_type,
@@ -975,6 +1004,7 @@ def load_dataset(
             tmp = SSHAR_ASUS_Dataset(
                 root_dir=root_dir,
                 split="train",
+                case_split=case_split,
                 shape_option=shape_option,
                 normalize=False,
                 target_time=target_time,
@@ -985,6 +1015,7 @@ def load_dataset(
         train_dataset = SSHAR_ASUS_Dataset(
             root_dir=root_dir,
             split="train",
+            case_split=case_split,
             shape_option=shape_option,
             normalize=normalize,
             norm_type=norm_type,
@@ -998,6 +1029,7 @@ def load_dataset(
         test_dataset = SSHAR_ASUS_Dataset(
             root_dir=root_dir,
             split="test",
+            case_split=case_split,
             shape_option=shape_option,
             normalize=normalize,
             norm_type=norm_type,
@@ -1013,18 +1045,16 @@ def load_dataset(
     # =======================================================
     elif name == "xrf55":
         if norm_type is None:
-            norm_type = "minmax"
-            
-        train_max_rep = kwargs.get("train_max_rep", 16)
+            norm_type = "zscore"
 
         mean = std = None
         if normalize and norm_type == "zscore":
-            mean, std = compute_xrf55_mean_std(root_dir, train_max_rep, shape_option, num_sub, target_time)
+            mean, std = compute_xrf55_mean_std(root_dir, case_split, shape_option, num_sub, target_time)
 
         train_dataset = XRF55Dataset(
             root_dir=root_dir,
             split="train",
-            train_max_rep=train_max_rep,
+            case_split=case_split,
             shape_option=shape_option,
             num_sub=num_sub,
             normalize=normalize,
@@ -1038,7 +1068,7 @@ def load_dataset(
         test_dataset = XRF55Dataset(
             root_dir=root_dir,
             split="test",
-            train_max_rep=train_max_rep,
+            case_split=case_split,
             shape_option=shape_option,
             num_sub=num_sub,
             normalize=normalize,
