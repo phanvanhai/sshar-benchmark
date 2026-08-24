@@ -912,6 +912,7 @@ def load_dataset(
     intel_shape = kwargs.get("intel_shape", False)
     allowed_labels = kwargs.get("allowed_labels", DEFAULT_SELECTED_LABELS)
     case_split = kwargs.get("case_split", 0)
+    print(f"Split case = {case_split}")
 
     # =======================================================
     # UT_HAR
