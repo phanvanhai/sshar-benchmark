@@ -324,7 +324,7 @@ class _SSHARDatasetBase(Dataset):
         self.device = device
         self.signal = signal
         self.split = split
-        self.case_split = case_split,
+        self.case_split = case_split
         self.shape_option = shape_option
         self.normalize = normalize
         self.norm_type = norm_type
