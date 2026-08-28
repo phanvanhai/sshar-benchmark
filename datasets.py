@@ -441,10 +441,10 @@ class _SSHARDatasetBase(Dataset):
                         continue
 
                     # Chia theo nguoi
-                    user_num = int(subject.split("_")[1])
-                    is_train = user_num in USER_CASES["sshar"][self.case_split]
+                    # user_num = int(subject.split("_")[1])
+                    # is_train = user_num in USER_CASES["sshar"][self.case_split]
                     # Chia theo so lan lap
-                    # is_train = (rep <= 8 if direction == 0 else rep <= 4)
+                    is_train = (rep <= 8 if direction == 0 else rep <= 4)
 
                     if (self.split == "train" and not is_train):
                         continue
@@ -758,11 +758,10 @@ class XRF55Dataset(Dataset):
                     continue
 
                 # Chia theo nguoi
-                user_num = int(user_id)
-                is_train = user_num in USER_CASES["xrf55"][self.case_split]
-                # is_train = user_num <= 24
+                # user_num = int(user_id)
+                # is_train = user_num in USER_CASES["xrf55"][self.case_split]
                 # Chia theo so lan lap                
-                # is_train = rep_num <= 16
+                is_train = rep_num <= 16
 
                 if self.split == "train" and not is_train:
                     continue
