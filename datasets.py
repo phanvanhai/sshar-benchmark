@@ -446,12 +446,12 @@ class _SSHARDatasetBase(Dataset):
                     if SPLIT_BY_REPEAT:
                         # Chia theo so lan lap
                         is_train = (rep <= 8 if direction == 0 else rep <= 4)
-                        print("Split by repeat")
+                        # print("Split by repeat")
                     else:
                         # Chia theo nguoi
                         user_num = int(subject.split("_")[1])
                         is_train = user_num in USER_CASES["sshar"][self.case_split]
-                        print("Split by user")
+                        # print("Split by user")
 
                     if (self.split == "train" and not is_train):
                         continue
