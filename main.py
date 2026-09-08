@@ -370,6 +370,23 @@ def main():
         input_shape=input_shape,
     )
 
+    def format_count(value):
+        if value is None:
+            return "N/A"
+        if value >= 1_000_000_000:
+            return f"{value / 1_000_000_000:.3f}G"
+        if value >= 1_000_000:
+            return f"{value / 1_000_000:.3f}M"
+        if value >= 1_000:
+            return f"{value / 1_000:.3f}K"
+        return str(value)
+
+    print("Model Complexity")
+    print(f"Total Params     : {format_count(total_params)}")
+    print(f"Trainable Params : {format_count(trainable_params)}")
+    print(f"MACs / sample    : {format_count(complexity['macs_per_sample'])}")
+    print(f"FLOPs / sample   : {format_count(complexity['flops_per_sample'])}")
+
     save_model_complexity(
         save_dir=save_dir,
         dataset=args.dataset,
