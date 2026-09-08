@@ -321,6 +321,7 @@ def main():
         num_classes=num_classes,
         dataset=args.dataset,
     )
+    model = model.to(device)
 
     scheduler_cfg = get_default_scheduler_cfg(args.model)
     if args.scheduler and args.scheduler.lower() != "none":
