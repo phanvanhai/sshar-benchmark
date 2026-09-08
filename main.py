@@ -16,7 +16,11 @@ import torch
 from datasets import load_dataset
 from models import get_model
 from train import train
-from metrics import evaluate_model
+from metrics import (
+    evaluate_model,
+    measure_model_complexity,
+    save_model_complexity,
+)
 
 # ============================================================
 # Global seed
@@ -348,6 +352,34 @@ def main():
         exist_ok=True,
     )
     # --------------------------------------------------------
+    # Count and save model complexity before training
+    # --------------------------------------------------------
+    total_params = sum(
+        p.numel()
+        for p in model.parameters()
+    )
+
+    trainable_params = sum(
+        p.numel()
+        for p in model.parameters()
+        if p.requires_grad
+    )
+
+    complexity = measure_model_complexity(
+        model=model,
+        input_shape=input_shape,
+    )
+
+    save_model_complexity(
+        save_dir=save_dir,
+        dataset=args.dataset,
+        model=args.model,
+        total_params=total_params,
+        trainable_params=trainable_params,
+        complexity=complexity,
+    )
+
+    # --------------------------------------------------------
     # Train
     # --------------------------------------------------------
     start_time = time.time()
@@ -362,19 +394,6 @@ def main():
         scheduler_cfg=scheduler_cfg,
     )
     training_time = time.time() - start_time
-    # --------------------------------------------------------
-    # Count parameters
-    # --------------------------------------------------------
-    total_params = sum(
-        p.numel()
-        for p in model.parameters()
-    )
-
-    trainable_params = sum(
-        p.numel()
-        for p in model.parameters()
-        if p.requires_grad
-    )
     # --------------------------------------------------------
     # Evaluation
     # --------------------------------------------------------
@@ -391,6 +410,7 @@ def main():
         training_time=training_time,
         total_params=total_params,
         trainable_params=trainable_params,
+        complexity=complexity,
     )
 
     print()

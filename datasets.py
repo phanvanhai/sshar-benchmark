@@ -25,7 +25,7 @@ from torch.utils.data import Dataset
 from torch.utils.data import DataLoader
 
 
-SPLIT_BY_REPEAT  = 0
+SPLIT_BY_REPEAT  = 1
 
 # ============================================================
 # Default configuration

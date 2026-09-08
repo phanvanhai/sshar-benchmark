@@ -11,6 +11,12 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
+import torch
+
+try:
+    from thop import profile
+except ImportError:
+    profile = None
 
 from sklearn.metrics import (
     accuracy_score,
@@ -20,6 +26,53 @@ from sklearn.metrics import (
     precision_score,
     recall_score,
 )
+
+
+def measure_model_complexity(model, input_shape):
+    """Measure MACs and FLOPs for one inference sample."""
+
+    result = {
+        "macs": None,
+        "flops": None,
+        "macs_per_sample": None,
+        "flops_per_sample": None,
+    }
+
+    if profile is None:
+        print("Warning: install thop to measure MACs/FLOPs.")
+        return result
+
+    was_training = model.training
+    device = next(model.parameters()).device
+    dummy_input = torch.zeros(
+        (1, *input_shape),
+        device=device,
+    )
+
+    try:
+        model.eval()
+        with torch.no_grad():
+            macs, _ = profile(
+                model,
+                inputs=(dummy_input,),
+                verbose=False,
+            )
+        flops = 2 * macs
+        result.update({
+            "macs": int(macs),
+            "flops": int(flops),
+            "macs_per_sample": int(macs),
+            "flops_per_sample": int(flops),
+        })
+    except Exception as exc:
+        print(
+            "Warning: could not measure MACs/FLOPs "
+            f"for this model: {exc}"
+        )
+    finally:
+        model.train(was_training)
+
+    return result
 
 
 # ============================================================
@@ -113,6 +166,7 @@ def save_metrics(
     training_time,
     total_params=None,
     trainable_params=None,
+    complexity=None,
 ):
 
     data = {
@@ -144,6 +198,14 @@ def save_metrics(
             total_params,
         "trainable_params":
             trainable_params,
+        "macs":
+            None if complexity is None else complexity.get("macs"),
+        "flops":
+            None if complexity is None else complexity.get("flops"),
+        "macs_per_sample":
+            None if complexity is None else complexity.get("macs_per_sample"),
+        "flops_per_sample":
+            None if complexity is None else complexity.get("flops_per_sample"),
     }
 
     with open(
@@ -160,6 +222,36 @@ def save_metrics(
             f,
             indent=4,
         )
+
+
+def save_model_complexity(
+    save_dir,
+    dataset,
+    model,
+    total_params,
+    trainable_params,
+    complexity,
+):
+    """Save model complexity before the potentially long training run."""
+
+    data = {
+        "dataset": dataset,
+        "model": model,
+        "status": "pending_training",
+        "total_params": total_params,
+        "trainable_params": trainable_params,
+        "macs": complexity.get("macs"),
+        "flops": complexity.get("flops"),
+        "macs_per_sample": complexity.get("macs_per_sample"),
+        "flops_per_sample": complexity.get("flops_per_sample"),
+    }
+
+    with open(
+        os.path.join(save_dir, "metrics.json"),
+        "w",
+        encoding="utf-8",
+    ) as f:
+        json.dump(data, f, indent=4)
 
 
 # ============================================================
@@ -388,6 +480,7 @@ def evaluate_model(
     class_names=None,
     total_params=None,
     trainable_params=None,
+    complexity=None,
 ):
     """
     Save all evaluation results.
@@ -428,6 +521,7 @@ def evaluate_model(
         training_time=training_time,
         total_params=total_params,
         trainable_params=trainable_params,
+        complexity=complexity,
     )
 
     save_predictions(
