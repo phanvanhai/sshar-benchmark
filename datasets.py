@@ -767,12 +767,10 @@ class XRF55Dataset(Dataset):
                 if SPLIT_BY_REPEAT:
                     # Chia theo so lan lap                
                     is_train = rep_num <= 16
-                    print("Split by repeat")
                 else:
                     # Chia theo nguoi
                     user_num = int(user_id)
                     is_train = user_num in USER_CASES["xrf55"][self.case_split]
-                    print("Split by user")
                 
 
                 if self.split == "train" and not is_train:
