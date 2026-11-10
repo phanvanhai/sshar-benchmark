@@ -167,11 +167,17 @@ def save_metrics(
     total_params=None,
     trainable_params=None,
     complexity=None,
+    selection=None,
+    total_epochs=None,
 ):
 
     data = {
         "dataset": dataset,
         "model": model,
+        # which checkpoint these numbers come from: last_epoch | best_test
+        "selection": selection,
+        "epoch": int(best_epoch),
+        "total_epochs": None if total_epochs is None else int(total_epochs),
         "accuracy":
             float(metrics["accuracy"]),
         "precision_macro":
@@ -186,8 +192,6 @@ def save_metrics(
             float(metrics["recall_weighted"]),
         "f1_weighted":
             float(metrics["f1_weighted"]),
-        "best_epoch":
-            int(best_epoch),
         "train_size":
             int(train_size),
         "test_size":
@@ -247,7 +251,7 @@ def save_model_complexity(
     }
 
     with open(
-        os.path.join(save_dir, "metrics.json"),
+        os.path.join(save_dir, "complexity.json"),
         "w",
         encoding="utf-8",
     ) as f:
@@ -481,6 +485,8 @@ def evaluate_model(
     total_params=None,
     trainable_params=None,
     complexity=None,
+    selection=None,
+    total_epochs=None,
 ):
     """
     Save all evaluation results.
@@ -522,6 +528,8 @@ def evaluate_model(
         total_params=total_params,
         trainable_params=trainable_params,
         complexity=complexity,
+        selection=selection,
+        total_epochs=total_epochs,
     )
 
     save_predictions(

@@ -25,7 +25,15 @@ from torch.utils.data import Dataset
 from torch.utils.data import DataLoader
 
 
+# Default split mode when none is passed explicitly (main.py --split overrides it).
+#   1 -> "repeat": first repetitions train, last repetitions test
+#   0 -> "user"  : USER_CASES["sshar"][case_split] subjects train, the others test
 SPLIT_BY_REPEAT  = 0
+SPLIT_MODES = ("repeat", "user")
+
+
+def default_split_mode():
+    return "repeat" if SPLIT_BY_REPEAT else "user"
 
 # ============================================================
 # Default configuration
@@ -99,6 +107,40 @@ def scan_folders(root: Path, prefix: str):
             folders.append(item.name)
 
     return folders
+
+
+def resolve_room_dirs(root_dirs, rooms=None):
+    """
+    Collect room folders from one or several dataset roots.
+
+    root_dirs : str | Path | list of them. Each root contains room_XX folders.
+    rooms     : None (all rooms found) or list of room folder names, e.g. ["room_01", "room_02"].
+
+    Returns a list of (room_name, room_path), sorted by room name.
+    """
+    if isinstance(root_dirs, (str, Path)):
+        root_dirs = [root_dirs]
+
+    found = {}
+    for root in root_dirs:
+        root = Path(root)
+        for name in scan_folders(root, "room"):
+            if name in found:
+                raise ValueError(
+                    f"Room '{name}' found in several roots: {found[name]} and {root / name}"
+                )
+            found[name] = root / name
+
+    if not found:
+        raise ValueError(f"No room_* folder found under: {[str(r) for r in root_dirs]}")
+
+    if rooms is None:
+        rooms = sorted(found)
+    missing = [r for r in rooms if r not in found]
+    if missing:
+        raise ValueError(f"Rooms {missing} not found. Available: {sorted(found)}")
+
+    return [(r, found[r]) for r in sorted(rooms)]
 
 
 # ============================================================
@@ -320,9 +362,10 @@ class _SSHARDatasetBase(Dataset):
         rx_list=None,
         intel_shape=False,
         allowed_labels=None,
+        split_mode=None,
     ):
 
-        self.root_dir = Path(root_dir)
+        self.root_dir = root_dir
         self.device = device
         self.signal = signal
         self.split = split
@@ -336,14 +379,13 @@ class _SSHARDatasetBase(Dataset):
         self.intel_shape = intel_shape
         self.allowed_labels = tuple(DEFAULT_SELECTED_LABELS) if allowed_labels is None else tuple(allowed_labels)
         self.label_map = {label: idx for idx, label in enumerate(self.allowed_labels)}
+        self.split_mode = default_split_mode() if split_mode is None else split_mode
+        if self.split_mode not in SPLIT_MODES:
+            raise ValueError(f"Unknown split_mode {self.split_mode}, expected {SPLIT_MODES}")
         # ----------------------------------------
-        if rooms is None:
-            rooms = scan_folders(
-                self.root_dir,
-                "room",
-            )
-
-        self.rooms = rooms
+        # list of (room_name, room_path); roots may be several folders
+        self.room_dirs = resolve_room_dirs(root_dir, rooms)
+        self.rooms = [name for name, _ in self.room_dirs]
 
         # ----------------------------------------
         if rx_list is None:
@@ -357,10 +399,9 @@ class _SSHARDatasetBase(Dataset):
         # ----------------------------------------
         if subjects is None:
             subjects = []
-            for room in self.rooms:
+            for _, room_path in self.room_dirs:
                 base = (
-                    self.root_dir /
-                    room /
+                    room_path /
                     self.device /
                     self.rx_list[0]
                 )
@@ -407,11 +448,10 @@ class _SSHARDatasetBase(Dataset):
         }
         """
         self.samples.clear()
-        for room in self.rooms:
+        for room, room_path in self.room_dirs:
             for subject in self.subjects:
                 folder = (
-                    self.root_dir /
-                    room /
+                    room_path /
                     self.device /
                     self.rx_list[0] /
                     subject
@@ -443,15 +483,13 @@ class _SSHARDatasetBase(Dataset):
                         continue
 
                     
-                    if SPLIT_BY_REPEAT:
+                    if self.split_mode == "repeat":
                         # Chia theo so lan lap
                         is_train = (rep <= 8 if direction == 0 else rep <= 4)
-                        # print("Split by repeat")
                     else:
-                        # Chia theo nguoi
+                        # Chia theo nguoi (subject id is global across rooms)
                         user_num = int(subject.split("_")[1])
                         is_train = user_num in USER_CASES["sshar"][self.case_split]
-                        # print("Split by user")
 
                     if (self.split == "train" and not is_train):
                         continue
@@ -462,8 +500,7 @@ class _SSHARDatasetBase(Dataset):
 
                     for rx in self.rx_list:
                         rx_files.append(
-                            self.root_dir
-                            / room
+                            room_path
                             / self.device
                             / rx
                             / subject
@@ -604,6 +641,7 @@ class SSHAR_ESP_Dataset(_SSHARDatasetBase):
         rx_list=None,
         intel_shape=False,
         allowed_labels=None,
+        split_mode=None,
     ):
         super().__init__(
             root_dir=root_dir,
@@ -622,6 +660,7 @@ class SSHAR_ESP_Dataset(_SSHARDatasetBase):
             rx_list=rx_list,
             intel_shape=intel_shape,
             allowed_labels=allowed_labels,
+            split_mode=split_mode,
         )
 
 # ============================================================
@@ -645,6 +684,7 @@ class SSHAR_ASUS_Dataset(_SSHARDatasetBase):
         rx_list=None,
         intel_shape=False,
         allowed_labels=None,
+        split_mode=None,
     ):
         super().__init__(
             root_dir=root_dir,
@@ -663,7 +703,23 @@ class SSHAR_ASUS_Dataset(_SSHARDatasetBase):
             rx_list=rx_list,
             intel_shape=intel_shape,
             allowed_labels=allowed_labels,
+            split_mode=split_mode,
         )
+
+# ============================================================
+# SSHAR split summary
+# ============================================================
+def print_sshar_split_summary(train_dataset, test_dataset):
+    """Print rooms / split mode and per-room sample + subject counts."""
+    print(f"SSHAR device={train_dataset.device} split_mode={train_dataset.split_mode} "
+          f"rooms={train_dataset.rooms}")
+    for room, room_path in train_dataset.room_dirs:
+        for tag, ds in (("train", train_dataset), ("test", test_dataset)):
+            subs = sorted({x["subject"] for x in ds.samples if x["room"] == room})
+            n = sum(1 for x in ds.samples if x["room"] == room)
+            ids = [int(x.split("_")[1]) for x in subs]
+            print(f"  {room} ({room_path}) {tag:5s}: {n:5d} samples, subjects {ids}")
+
 
 # ============================================================
 # Compute SSHAR mean/std
@@ -955,100 +1011,38 @@ def load_dataset(
         )
 
     # =======================================================
-    # SSHAR ESP
+    # SSHAR ESP / asus
     # =======================================================
-    elif name == "sshar_esp":
+    elif name in ("sshar_esp", "sshar_asus"):
         if norm_type is None:
             norm_type = "zscore"
 
-        mean = std = None
-        if normalize and norm_type == "zscore":
-            tmp = SSHAR_ESP_Dataset(
-                root_dir=root_dir,
-                split="train",
-                case_split=case_split,
-                shape_option=shape_option,
-                normalize=False,
-                target_time=target_time,
-                intel_shape=intel_shape,
-            )
-            mean, std = compute_sshar_mean_std(tmp)
-
-        train_dataset = SSHAR_ESP_Dataset(
+        cls = SSHAR_ESP_Dataset if name == "sshar_esp" else SSHAR_ASUS_Dataset
+        common = dict(
             root_dir=root_dir,
-            split="train",
             case_split=case_split,
             shape_option=shape_option,
-            normalize=normalize,
-            norm_type=norm_type,
-            mean=mean,
-            std=std,
             target_time=target_time,
             intel_shape=intel_shape,
-            allowed_labels=allowed_labels,
+            rooms=kwargs.get("rooms", None),
+            split_mode=kwargs.get("split_mode", None),
         )
-
-        test_dataset = SSHAR_ESP_Dataset(
-            root_dir=root_dir,
-            split="test",
-            case_split=case_split,
-            shape_option=shape_option,
-            normalize=normalize,
-            norm_type=norm_type,
-            mean=mean,
-            std=std,
-            target_time=target_time,
-            intel_shape=intel_shape,
-            allowed_labels=allowed_labels,
-        )
-
-    # =======================================================
-    # SSHAR asus
-    # =======================================================
-    elif name == "sshar_asus":
-        if norm_type is None:
-            norm_type = "zscore"
 
         mean = std = None
         if normalize and norm_type == "zscore":
-            tmp = SSHAR_ASUS_Dataset(
-                root_dir=root_dir,
-                split="train",
-                case_split=case_split,
-                shape_option=shape_option,
-                normalize=False,
-                target_time=target_time,
-                intel_shape=intel_shape,
-            )
+            # statistics from the TRAIN split only (all selected rooms pooled)
+            tmp = cls(split="train", normalize=False, **common)
             mean, std = compute_sshar_mean_std(tmp)
 
-        train_dataset = SSHAR_ASUS_Dataset(
-            root_dir=root_dir,
-            split="train",
-            case_split=case_split,
-            shape_option=shape_option,
-            normalize=normalize,
-            norm_type=norm_type,
-            mean=mean,
-            std=std,
-            target_time=target_time,
-            intel_shape=intel_shape,
-            allowed_labels=allowed_labels,
+        train_dataset = cls(
+            split="train", normalize=normalize, norm_type=norm_type,
+            mean=mean, std=std, allowed_labels=allowed_labels, **common,
         )
-
-        test_dataset = SSHAR_ASUS_Dataset(
-            root_dir=root_dir,
-            split="test",
-            case_split=case_split,
-            shape_option=shape_option,
-            normalize=normalize,
-            norm_type=norm_type,
-            mean=mean,
-            std=std,
-            target_time=target_time,
-            intel_shape=intel_shape,
-            allowed_labels=allowed_labels,
+        test_dataset = cls(
+            split="test", normalize=normalize, norm_type=norm_type,
+            mean=mean, std=std, allowed_labels=allowed_labels, **common,
         )
+        print_sshar_split_summary(train_dataset, test_dataset)
 
     # =======================================================
     # XRF55

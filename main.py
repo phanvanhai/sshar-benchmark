@@ -92,8 +92,27 @@ def parse_args():
     parser.add_argument(
         "--data_root",
         type=str,
+        nargs="+",
         required=True,
-        help="Dataset root directory",
+        help="Dataset root directory. SSHAR: one or several roots, each containing "
+             "room_XX folders (e.g. the room-1 and room-2 Kaggle inputs).",
+    )
+
+    parser.add_argument(
+        "--rooms",
+        type=str,
+        default="all",
+        help="SSHAR only: rooms to use. 'all' (every room found under --data_root), "
+             "'1', '2', '1,2' or folder names such as 'room_01,room_02'.",
+    )
+
+    parser.add_argument(
+        "--split",
+        type=str,
+        default=None,
+        choices=["repeat", "user"],
+        help="SSHAR only: 'repeat' (first repetitions train) or 'user' "
+             "(USER_CASES[case_split] subjects train). Default: SPLIT_BY_REPEAT in datasets.py.",
     )
 
     parser.add_argument(
@@ -224,7 +243,43 @@ def parse_args():
             help="case split from 0 to 4"
         )
 
-    return parser.parse_args()
+    args = parser.parse_args()
+
+    if not args.dataset.startswith("sshar") and len(args.data_root) > 1:
+        parser.error("several --data_root values are only supported for sshar_* datasets")
+    if not args.dataset.startswith("sshar"):
+        args.data_root = args.data_root[0]
+
+    args.room_list = parse_rooms(args.rooms)
+    return args
+
+
+def parse_rooms(rooms):
+    """'all' -> None; '1,2' / 'room_01,room_02' -> ['room_01', 'room_02']."""
+    if rooms is None or rooms.strip().lower() == "all":
+        return None
+    out = []
+    for r in rooms.split(","):
+        r = r.strip()
+        if not r:
+            continue
+        out.append(f"room_{int(r):02d}" if r.isdigit() else r)
+    return sorted(set(out))
+
+
+def run_tag(args, train_dataset):
+    """
+    Suffix for the result folder so per-room / pooled / split runs do not overwrite
+    each other, built from what the dataset actually loaded.
+    e.g. sshar_esp_cnn_gru_room01+02_repeat, sshar_asus_bimamba_room02_user_case1
+    """
+    if not args.dataset.startswith("sshar"):
+        return ""
+    rooms = "+".join(r.replace("room_", "") for r in train_dataset.rooms)
+    tag = f"_room{rooms}_{train_dataset.split_mode}"
+    if train_dataset.split_mode == "user":
+        tag += f"_case{args.case_split}"
+    return tag
 
 
 def get_default_scheduler_cfg(model_name):
@@ -279,6 +334,9 @@ def main():
     # --------------------------------------------------------
     dataset_kwargs = {}
     dataset_kwargs["case_split"] = args.case_split
+    if args.dataset.startswith("sshar"):
+        dataset_kwargs["rooms"] = args.room_list
+        dataset_kwargs["split_mode"] = args.split
 
     if args.model == "bimamba":
         dataset_kwargs["target_time"] = 250
@@ -346,8 +404,9 @@ def main():
     # --------------------------------------------------------
     save_dir = os.path.join(
         args.result_root,
-        f"{args.dataset}_{args.model}",
+        f"{args.dataset}_{args.model}{run_tag(args, train_loader.dataset)}",
     )
+    print("Save dir    :", save_dir)
     os.makedirs(
         save_dir,
         exist_ok=True,
@@ -401,7 +460,7 @@ def main():
     # Train
     # --------------------------------------------------------
     start_time = time.time()
-    history, y_true, y_pred, best_epoch, best_acc = train(
+    history, results = train(
         model=model,
         train_loader=train_loader,
         test_loader=test_loader,
@@ -415,21 +474,28 @@ def main():
     # --------------------------------------------------------
     # Evaluation
     # --------------------------------------------------------
-    evaluate_model(
-        history=history,
-        y_true=y_true,
-        y_pred=y_pred,
-        save_dir=save_dir,
-        dataset=args.dataset,
-        model=args.model,
-        best_epoch=best_epoch,
-        train_size=train_size,
-        test_size=test_size,
-        training_time=training_time,
-        total_params=total_params,
-        trainable_params=trainable_params,
-        complexity=complexity,
-    )
+    # One full result folder per checkpoint-selection rule:
+    #   save_dir/last_epoch/  -> reported numbers (no selection on test)
+    #   save_dir/best_test/   -> oracle (test-selected), analysis only
+    for selection, r in results.items():
+        print(f"\n>>> {selection} (epoch {r['epoch']}) -> {r['dir']}")
+        evaluate_model(
+            history=history,
+            y_true=r["y_true"],
+            y_pred=r["y_pred"],
+            save_dir=r["dir"],
+            dataset=args.dataset,
+            model=args.model,
+            best_epoch=r["epoch"],
+            train_size=train_size,
+            test_size=test_size,
+            training_time=training_time,
+            total_params=total_params,
+            trainable_params=trainable_params,
+            complexity=complexity,
+            selection=selection,
+            total_epochs=args.epochs,
+        )
 
     print()
     print("=" * 60)

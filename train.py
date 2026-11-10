@@ -12,6 +12,12 @@ import pandas as pd
 import torch
 import torch.nn as nn
 from torch.optim import lr_scheduler
+from sklearn.metrics import f1_score
+
+# Sub-folders of save_dir, one per checkpoint-selection rule.
+#   last_epoch : model after the final epoch (no selection; reported protocol)
+#   best_test  : epoch with the highest test accuracy (oracle, for analysis only)
+SELECTIONS = ("last_epoch", "best_test")
 
 
 def create_scheduler(optimizer, scheduler_cfg=None):
@@ -188,11 +194,16 @@ def train(
         - name: scheduler type
         - args: scheduler arguments
 
+    Saves
+    -----
+    save_dir/history.csv
+    save_dir/last_epoch/model.pth   model after the final epoch (reported)
+    save_dir/best_test/model.pth    epoch with highest test accuracy (oracle)
+
     Returns
     -------
-    history
-    y_true
-    y_pred
+    history : DataFrame
+    results : {"last_epoch"|"best_test": {"epoch", "y_true", "y_pred", "dir"}}
     """
 
     os.makedirs(save_dir, exist_ok=True)
@@ -208,8 +219,12 @@ def train(
 
     history = []
 
-    best_acc = 0.0
-    best_epoch = 0
+    ckpt_dirs = {name: os.path.join(save_dir, name) for name in SELECTIONS}
+    for d in ckpt_dirs.values():
+        os.makedirs(d, exist_ok=True)
+
+    best_acc = -1.0
+    best = None  # {"epoch", "y_true", "y_pred"} at the best test accuracy
 
     start_time = time.time()
     # --------------------------------------------------------
@@ -228,6 +243,7 @@ def train(
             criterion=criterion,
             device=device,
         )
+        test_f1 = f1_score(y_true, y_pred, average="macro", zero_division=0)
 
         history.append({
             "epoch": epoch,
@@ -235,6 +251,7 @@ def train(
             "train_acc": train_acc,
             "test_loss": test_loss,
             "test_acc": test_acc,
+            "test_f1_macro": test_f1,
         })
 
         print(
@@ -242,21 +259,19 @@ def train(
             f"Train Loss: {train_loss:.4f}  "
             f"Train Acc: {train_acc:.4f}  "
             f"Test Loss: {test_loss:.4f}  "
-            f"Test Acc: {test_acc:.4f}"
+            f"Test Acc: {test_acc:.4f}  "
+            f"Test F1: {test_f1:.4f}"
         )
 
         # ----------------------------------------------------
-        # Save best model
+        # best_test (oracle): highest test accuracy so far
         # ----------------------------------------------------
         if test_acc > best_acc:
             best_acc = test_acc
-            best_epoch = epoch
+            best = {"epoch": epoch, "y_true": list(y_true), "y_pred": list(y_pred)}
             torch.save(
                 model.state_dict(),
-                os.path.join(
-                    save_dir,
-                    "best_model.pth",
-                ),
+                os.path.join(ckpt_dirs["best_test"], "model.pth"),
             )
 
         if scheduler is not None:
@@ -269,17 +284,26 @@ def train(
                 scheduler.step()
 
     # --------------------------------------------------------
+    # last_epoch: model after the final epoch
+    # --------------------------------------------------------
+    torch.save(
+        model.state_dict(),
+        os.path.join(ckpt_dirs["last_epoch"], "model.pth"),
+    )
+    last = {"epoch": epochs, "y_true": list(y_true), "y_pred": list(y_pred)}
+
+    # --------------------------------------------------------
     # Training finished
     # --------------------------------------------------------
     elapsed = time.time() - start_time
 
     print("\nTraining Finished")
-    print(f"Best Epoch : {best_epoch}")
-    print(f"Best Acc   : {best_acc:.4f}")
+    print(f"Last Epoch : {epochs}  Acc: {history[-1]['test_acc']:.4f}  (reported)")
+    print(f"Best Epoch : {best['epoch']}  Acc: {best_acc:.4f}  (oracle, test-selected)")
     print(f"Time       : {elapsed:.1f} sec")
 
     # --------------------------------------------------------
-    # Save history
+    # Save history (shared by both selections)
     # --------------------------------------------------------
     history = pd.DataFrame(history)
     history.to_csv(
@@ -290,33 +314,9 @@ def train(
         index=False,
     )
 
-    # --------------------------------------------------------
-    # Load best model
-    # --------------------------------------------------------
-    model.load_state_dict(
-        torch.load(
-            os.path.join(
-                save_dir,
-                "best_model.pth",
-            ),
-            map_location=device,
-        )
-    )
+    # results[selection] = {"epoch", "y_true", "y_pred", "dir"}
+    results = {"last_epoch": last, "best_test": best}
+    for name, r in results.items():
+        r["dir"] = ckpt_dirs[name]
 
-    # --------------------------------------------------------
-    # Final evaluation
-    # --------------------------------------------------------
-    test_loss, test_acc, y_true, y_pred = evaluate(
-        model=model,
-        loader=test_loader,
-        criterion=criterion,
-        device=device,
-    )
-
-    return (
-        history,
-        y_true,
-        y_pred,
-        best_epoch,
-        best_acc,
-    )
+    return history, results
