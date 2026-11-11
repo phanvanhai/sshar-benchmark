@@ -1,0 +1,38 @@
+import os, subprocess
+os.environ["PYDEVD_DISABLE_FILE_VALIDATION"] = "1"
+os.chdir("/kaggle/working")
+
+REPO_URL, REPO = "https://github.com/phanvanhai/sshar-benchmark.git", "sshar-benchmark"
+if not os.path.exists(REPO):
+    subprocess.run(f"git clone {REPO_URL} {REPO}", shell=True, check=True)
+else:
+    subprocess.run("git pull", shell=True, check=True, cwd=REPO)
+os.chdir(REPO)
+print("[*] cwd:", os.getcwd(), "|", subprocess.run("git log --oneline -1", shell=True, capture_output=True, text=True).stdout)
+# phải thấy commit f6cac55 (--norm) hoặc mới hơn
+
+!pip install -q -r requirements.txt
+!pip install -q --no-build-isolation mamba-ssm
+
+import os
+R1 = "/kaggle/input/datasets/phanvanhai/csi-room-01"   # <-- sửa tên dataset room 1
+R2 = "/kaggle/input/datasets/phanvanhai/csi-room-02-0707"
+for r in (R1, R2):
+    print(r, "->", sorted(os.listdir(r)))   # phải thấy room_01 / room_02
+
+ROOMS = "1,2"                 # "1,2" = gộp 2 phòng | "1" = chỉ phòng 1 | "2" = chỉ phòng 2
+NORM = "sample"               # "sample" = z-score từng mẫu | "global" = z-score theo mean/std tập train
+COMMON = f"--data_root {R1} {R2} --rooms={ROOMS} --split=repeat --norm={NORM}"
+RUNS = [                      # bỏ comment để chọn run, chia 2 phiên nếu sợ quá 12h
+    ("sshar_esp",  "cnn_gru"),
+    ("sshar_esp",  "bimamba"),
+    # ("sshar_asus", "cnn_gru"),
+    # ("sshar_asus", "bimamba"),
+]
+for ds, model in RUNS:
+    print(f"\n{'#'*20} {ds} / {model} / rooms={ROOMS} / norm={NORM} {'#'*20}")
+    !python main.py {COMMON} --dataset={ds} --model={model}
+
+ZIP = f"/kaggle/working/results_room{ROOMS.replace(',', '')}_repeat_norm{NORM}.zip"
+!zip -qr {ZIP} results
+print("Saved:", ZIP)
