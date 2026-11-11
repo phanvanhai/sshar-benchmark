@@ -35,6 +35,20 @@ SPLIT_MODES = ("repeat", "user")
 def default_split_mode():
     return "repeat" if SPLIT_BY_REPEAT else "user"
 
+
+# Normalization types (norm_type):
+#   "zscore"        : global z-score, one mean/std from the pooled TRAIN split
+#   "zscore_sample" : per-sample z-score, each sample uses its own mean/std
+#                     (no dataset statistics)
+#   "minmax"        : per-sample min-max to [0, 1]
+# All normalizations are applied BEFORE time pooling (as in the official BiMamba code).
+NORM_TYPES = ("zscore", "zscore_sample", "minmax")
+
+
+def zscore_per_sample(x, eps=1e-8):
+    """Z-score one sample (numpy array) with its own mean/std over all elements."""
+    return (x - x.mean()) / (x.std() + eps)
+
 # ============================================================
 # Default configuration
 # ============================================================
@@ -605,6 +619,8 @@ class _SSHARDatasetBase(Dataset):
                 ) / (
                     xmax - xmin + 1e-8
                 )
+            elif self.norm_type == "zscore_sample":
+                x = zscore_per_sample(x)
             else:
                 raise ValueError(
                     f"Unknown norm_type {self.norm_type}"
@@ -873,6 +889,8 @@ class XRF55Dataset(Dataset):
                 if self.mean is None or self.std is None:
                     raise ValueError("mean/std required for zscore")
                 x = (x - self.mean) / (self.std + 1e-8)
+            elif self.norm_type == "zscore_sample":
+                x = zscore_per_sample(x)
             else:
                 raise ValueError(f"Unknown norm_type {self.norm_type}")
 
