@@ -38,16 +38,37 @@ def default_split_mode():
 
 # Normalization types (norm_type):
 #   "zscore"        : global z-score, one mean/std from the pooled TRAIN split
-#   "zscore_sample" : per-sample z-score, each sample uses its own mean/std
-#                     (no dataset statistics)
+#   "zscore_sample" : per-sample, per-receiver z-score: each RX of each sample uses its
+#                     own mean/std over all its antennas, subcarriers and time steps
+#   "zscore_sample_all" : per-sample z-score with ONE mean/std over the whole sample
+#                     (all RX together)
 #   "minmax"        : per-sample min-max to [0, 1]
+# No dataset statistics are used by the per-sample types.
 # All normalizations are applied BEFORE time pooling (as in the official BiMamba code).
-NORM_TYPES = ("zscore", "zscore_sample", "minmax")
+NORM_TYPES = ("zscore", "zscore_sample", "zscore_sample_all", "minmax")
+
+# XRF55 rows (270) = 3 receivers x 3 antennas x 30 subcarriers, receiver-major.
+XRF55_NUM_RX = 3
 
 
 def zscore_per_sample(x, eps=1e-8):
     """Z-score one sample (numpy array) with its own mean/std over all elements."""
     return (x - x.mean()) / (x.std() + eps)
+
+
+def zscore_per_sample_rx(x, n_rx, eps=1e-8):
+    """
+    Z-score one sample separately for each receiver.
+
+    x must be receiver-major along its first axis (e.g. (rx*ant*sub, T) or
+    (rx*ant, sub, T)), so that x.reshape(n_rx, -1) gives one row per receiver.
+    """
+    shape = x.shape
+    if shape[0] % n_rx != 0:
+        raise ValueError(f"first axis {shape[0]} not divisible by n_rx={n_rx}")
+    g = x.reshape(n_rx, -1)
+    g = (g - g.mean(axis=1, keepdims=True)) / (g.std(axis=1, keepdims=True) + eps)
+    return g.reshape(shape)
 
 # ============================================================
 # Default configuration
@@ -620,6 +641,9 @@ class _SSHARDatasetBase(Dataset):
                     xmax - xmin + 1e-8
                 )
             elif self.norm_type == "zscore_sample":
+                # x is RX-major after the reshape above
+                x = zscore_per_sample_rx(x, n_rx=len(sample["files"]))
+            elif self.norm_type == "zscore_sample_all":
                 x = zscore_per_sample(x)
             else:
                 raise ValueError(
@@ -890,6 +914,8 @@ class XRF55Dataset(Dataset):
                     raise ValueError("mean/std required for zscore")
                 x = (x - self.mean) / (self.std + 1e-8)
             elif self.norm_type == "zscore_sample":
+                x = zscore_per_sample_rx(x, n_rx=XRF55_NUM_RX)
+            elif self.norm_type == "zscore_sample_all":
                 x = zscore_per_sample(x)
             else:
                 raise ValueError(f"Unknown norm_type {self.norm_type}")

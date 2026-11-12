@@ -21,7 +21,7 @@ for r in (R1, R2):
     print(r, "->", sorted(os.listdir(r)))   # phải thấy room_01 / room_02
 
 ROOMS = "1,2"                 # "1,2" = gộp 2 phòng | "1" = chỉ phòng 1 | "2" = chỉ phòng 2
-NORM = "sample"               # "sample" = z-score từng mẫu | "global" = z-score theo mean/std tập train
+NORM = "sample"               # "sample" = z-score từng mẫu, riêng từng rx | "sample_all" = từng mẫu, gộp 3 rx | "global" = mean/std tập train
 COMMON = f"--data_root {R1} {R2} --rooms={ROOMS} --split=repeat --norm={NORM}"
 RUNS = [                      # bỏ comment để chọn run, chia 2 phiên nếu sợ quá 12h
     ("sshar_esp",  "cnn_gru"),

@@ -119,9 +119,10 @@ def parse_args():
         "--norm",
         type=str,
         default="global",
-        choices=["global", "sample"],
-        help="SSHAR / XRF55 z-score: 'global' (one mean/std from the TRAIN split) or "
-             "'sample' (each sample normalized by its own mean/std).",
+        choices=["global", "sample", "sample_all"],
+        help="SSHAR / XRF55 z-score: 'global' (one mean/std from the TRAIN split), "
+             "'sample' (each sample, each receiver normalized by its own mean/std) or "
+             "'sample_all' (each sample with one mean/std over all receivers).",
     )
 
     parser.add_argument(
@@ -281,9 +282,9 @@ def run_tag(args, train_dataset):
     Suffix for the result folder so per-room / pooled / split runs do not overwrite
     each other, built from what the dataset actually loaded.
     e.g. sshar_esp_cnn_gru_room01+02_repeat, sshar_asus_bimamba_room02_user_case1,
-         sshar_esp_cnn_gru_room01+02_repeat_normsample (per-sample z-score)
+         sshar_esp_cnn_gru_room01+02_repeat_normsample (per-sample, per-RX z-score)
     """
-    norm_tag = "_normsample" if args.norm == "sample" else ""
+    norm_tag = "" if args.norm == "global" else f"_norm{args.norm.replace('_', '')}"
     if not args.dataset.startswith("sshar"):
         return norm_tag
     rooms = "+".join(r.replace("room_", "") for r in train_dataset.rooms)
@@ -346,9 +347,13 @@ def main():
     dataset_kwargs = {}
     dataset_kwargs["case_split"] = args.case_split
     if args.dataset in ("sshar_esp", "sshar_asus", "xrf55"):
-        dataset_kwargs["norm_type"] = "zscore_sample" if args.norm == "sample" else "zscore"
-    elif args.norm == "sample":
-        raise ValueError("--norm sample is only supported for sshar_* and xrf55")
+        dataset_kwargs["norm_type"] = {
+            "global": "zscore",
+            "sample": "zscore_sample",          # per sample, per RX
+            "sample_all": "zscore_sample_all",  # per sample, all RX together
+        }[args.norm]
+    elif args.norm != "global":
+        raise ValueError(f"--norm {args.norm} is only supported for sshar_* and xrf55")
     if args.dataset.startswith("sshar"):
         dataset_kwargs["rooms"] = args.room_list
         dataset_kwargs["split_mode"] = args.split
