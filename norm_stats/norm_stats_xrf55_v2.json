@@ -1,0 +1,12 @@
+{
+  "dataset_root": "D:\\workspace\\HUST\\Personal\\WiFi-Sensing\\Code\\CodeForPaper\\benchmark\\data\\XRF55_8act_dataset",
+  "split": "train: rep 1-12 (labels 1-8, all users)",
+  "note": "global z-score stats on raw samples (270 x 1000)",
+  "stats": {
+    "xrf55": {
+      "mean": 9.257704017655142,
+      "std": 4.890460355733694,
+      "n_samples": 2880
+    }
+  }
+}

@@ -21,9 +21,9 @@ print(subprocess.run("git branch --show-current && git log --oneline -1",
 !pip install -q --no-build-isolation mamba-ssm
 
 # ===== Cell 3: cấu hình =====
-DATA_ROOT   = "/kaggle/input/datasets/phanvanhai/csi-room-02-0707"   # <-- sửa: thư mục chứa room_02
+ROOM2_ROOT  = "/kaggle/input/datasets/phanvanhai/csi-room-02-0707"   # <-- sửa: thư mục chứa room_02 (thí nghiệm 1-3)
+XRF55_ROOT  = "/kaggle/input/<xrf55-dataset>"                        # <-- sửa: thư mục chứa file .npy XRF55 (thí nghiệm 4)
 RESULT_ROOT = "/kaggle/working/results"
-print(DATA_ROOT, "->", sorted(os.listdir(DATA_ROOT)))               # phải thấy room_02
 
 MODELS = [
     "cnn_gru",
@@ -34,13 +34,22 @@ EXPERIMENTS = [               # bỏ comment thí nghiệm cần chạy
     "esp_esp",                # 1: ESP32 -> ESP32
     # "asus_asus",            # 2: ASUS (4 ăng-ten) -> ASUS
     # "asus0_esp",            # 3: ASUS (ăng-ten 0) -> ESP32
+    # "xrf55",                # 4: XRF55 -> XRF55
 ]
+
+def data_root_of(exp):
+    return XRF55_ROOT if exp == "xrf55" else ROOM2_ROOT
+
+for exp in EXPERIMENTS:       # kiểm tra đường dẫn: room 2 phải thấy room_02, XRF55 phải thấy file .npy
+    items = sorted(os.listdir(data_root_of(exp)))
+    print(exp, "->", data_root_of(exp), ":", items[:3], "...", len(items), "mục")
 
 # ===== Cell 4: chạy =====
 for exp in EXPERIMENTS:
+    data_root = data_root_of(exp)
     for model in MODELS:
         print(f"\n{'#' * 20} exp={exp} / model={model} {'#' * 20}")
-        !python main.py --exp {exp} --model {model} --data_root {DATA_ROOT} --result_root {RESULT_ROOT}
+        !python main.py --exp {exp} --model {model} --data_root {data_root} --result_root {RESULT_ROOT}
 
 # ===== Cell 5: nén kết quả để tải về =====
 ZIP = "/kaggle/working/results_v2_" + "_".join(EXPERIMENTS) + ".zip"

@@ -1179,24 +1179,95 @@ V2_LABEL_NAMES = (
     "sitdown", "standup", "pickup", "fall",
     "lie still", "walk", "run", "empty room",
 )
+# XRF55 subset: act05 / act08 are "play ukulele" / "play drum"
+V2_LABEL_NAMES_XRF55 = (
+    "sitdown", "standup", "pickup", "fall",
+    "play ukulele", "walk", "run", "play drum",
+)
 
-# Appendix A: mean/std on the TRAIN split of room 2 (raw samples, 1000 time steps, 56 subcarriers)
+# Appendix A: mean/std on the TRAIN split (raw samples, 1000 time steps)
 V2_NORM_STATS = {
-    "esp":       {"mean": 27.3713,   "std": 7.3189},    # ESP, 3 rx x 1 antenna
-    "asus":      {"mean": 2620.5715, "std": 640.4433},  # ASUS, 3 rx x 4 antennas
-    "asus_ant0": {"mean": 2591.4997, "std": 695.2622},  # ASUS, 3 rx x antenna 0
+    "esp":       {"mean": 27.3713,   "std": 7.3189},    # room 2 ESP, 3 rx x 1 antenna x 56 sub
+    "asus":      {"mean": 2620.5715, "std": 640.4433},  # room 2 ASUS, 3 rx x 4 antennas x 56 sub
+    "asus_ant0": {"mean": 2591.4997, "std": 695.2622},  # room 2 ASUS, 3 rx x antenna 0 x 56 sub
+    "xrf55":     {"mean": 9.2577,    "std": 4.8905},    # XRF55, 3 rx x 3 antennas x 30 sub
 }
 
 # One "domain" = (device, antennas to keep, normalization statistics key)
-#   antennas=None keeps every antenna of the device.
+#   antennas=None keeps every antenna of the device; device "xrf55" = XRF55 dataset.
 V2_EXPERIMENTS = {
     # 1: ESP32 -> ESP32
-    "esp_esp":   {"train": ("esp", None, "esp"),       "test": ("esp", None, "esp")},
+    "esp_esp":   {"train": ("esp", None, "esp"),       "test": ("esp", None, "esp"),
+                  "class_names": V2_LABEL_NAMES},
     # 2: ASUS (4 antennas) -> ASUS
-    "asus_asus": {"train": ("asus", None, "asus"),     "test": ("asus", None, "asus")},
+    "asus_asus": {"train": ("asus", None, "asus"),     "test": ("asus", None, "asus"),
+                  "class_names": V2_LABEL_NAMES},
     # 3: ASUS (antenna 0) -> ESP32  (train + val on ASUS antenna 0, test on ESP)
-    "asus0_esp": {"train": ("asus", [0], "asus_ant0"), "test": ("esp", None, "esp")},
+    "asus0_esp": {"train": ("asus", [0], "asus_ant0"), "test": ("esp", None, "esp"),
+                  "class_names": V2_LABEL_NAMES},
+    # 4: XRF55 -> XRF55  (--data_root = folder holding the XRF55 .npy files)
+    "xrf55":     {"train": ("xrf55", None, "xrf55"),   "test": ("xrf55", None, "xrf55"),
+                  "class_names": V2_LABEL_NAMES_XRF55},
 }
+
+# XRF55: 20 repetitions per (user, action) -> 6/2/2 = rep 1-12 / 13-16 / 17-20
+XRF55_NUM_SUB = 30
+
+
+def xrf55_split_of(rep):
+    return "train" if rep <= 12 else ("val" if rep <= 16 else "test")
+
+
+class XRF55V2Dataset(Dataset):
+    """
+    XRF55 (8 actions, 30 users), one split of the v2 repeat split.
+    Files <user>_<action>_<rep>.npy of shape (270, 1000) = (3 rx x 3 antennas x 30 sub, T).
+
+    __getitem__ returns a z-scored sample:
+        shape_option="3d": (9, 30, T)   (CNN-GRU)
+        shape_option="2d": (270, T)     (BiMamba)
+    With target_time, the time axis is max-pooled AFTER normalization (BiMamba).
+    """
+
+    device = "xrf55"
+    antennas = None
+
+    def __init__(self, root_dir, split, mean, std, shape_option="2d", target_time=None):
+        if split not in V2_SPLITS:
+            raise ValueError(f"split must be one of {V2_SPLITS}")
+        self.root_dir = Path(root_dir)
+        if not self.root_dir.exists():
+            raise FileNotFoundError(f"XRF55 folder not found: {self.root_dir}")
+        self.split = split
+        self.mean = float(mean)
+        self.std = float(std)
+        self.shape_option = shape_option
+        self.target_time = target_time
+        self.samples = []
+        for f in sorted(self.root_dir.glob("*.npy")):
+            parts = f.stem.split("_")
+            if len(parts) != 3:
+                continue
+            user, act, rep = map(int, parts)
+            if act not in DEFAULT_LABEL_MAP or xrf55_split_of(rep) != split:
+                continue
+            self.samples.append({"label": DEFAULT_LABEL_MAP[act], "subject": user, "path": f})
+
+    def __len__(self):
+        return len(self.samples)
+
+    def __getitem__(self, idx):
+        sample = self.samples[idx]
+        x = np.load(sample["path"]).astype(np.float32)          # (270, T)
+        x = (x - self.mean) / self.std
+        if self.shape_option == "3d":
+            x = x.reshape(x.shape[0] // XRF55_NUM_SUB, XRF55_NUM_SUB, x.shape[-1])
+        elif self.shape_option != "2d":
+            raise ValueError(f"Unknown shape_option: {self.shape_option}")
+        x = torch.from_numpy(np.ascontiguousarray(x)).float()
+        if self.target_time is not None and x.shape[-1] != self.target_time:
+            x = F.adaptive_max_pool1d(x, output_size=self.target_time)
+        return x, sample["label"]
 
 
 def v2_split_of(direction, rep):
@@ -1289,6 +1360,9 @@ def load_experiment_v2(exp, root_dir, batch_size=64, shape_option="2d", target_t
     def make(domain, split):
         device, antennas, stats_key = domain
         stats = V2_NORM_STATS[stats_key]
+        if device == "xrf55":
+            return XRF55V2Dataset(root_dir, split, stats["mean"], stats["std"],
+                                  shape_option=shape_option, target_time=target_time)
         return SSHARV2Dataset(root_dir, device, split, stats["mean"], stats["std"],
                               antennas=antennas, shape_option=shape_option, target_time=target_time)
 
@@ -1313,8 +1387,8 @@ def load_experiment_v2(exp, root_dir, batch_size=64, shape_option="2d", target_t
         "train_domain": cfg["train"],
         "test_domain": cfg["test"],
         "input_shape": tuple(x0.shape),
-        "num_classes": len(V2_LABEL_NAMES),
-        "class_names": list(V2_LABEL_NAMES),
+        "num_classes": len(cfg["class_names"]),
+        "class_names": list(cfg["class_names"]),
         "train_size": len(datasets["train"]),
         "val_size": len(datasets["val"]),
         "test_size": len(datasets["test"]),

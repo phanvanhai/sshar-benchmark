@@ -65,7 +65,8 @@ def parse_args():
         default=None,
         choices=list(V2_EXPERIMENTS),
         help="V2 experiment (doc/experiment_plan_v2.md): esp_esp (1: ESP32 -> ESP32), "
-             "asus_asus (2: ASUS 4 antennas -> ASUS), asus0_esp (3: ASUS antenna 0 -> ESP32). "
+             "asus_asus (2: ASUS 4 antennas -> ASUS), asus0_esp (3: ASUS antenna 0 -> ESP32), "
+             "xrf55 (4: XRF55 -> XRF55; --data_root = folder of the XRF55 .npy files). "
              "When set, --dataset/--rooms/--split/--norm/--case_split are ignored.",
     )
 
@@ -267,7 +268,8 @@ def parse_args():
 
     if args.exp is not None:
         if len(args.data_root) != 1:
-            parser.error("--exp takes exactly one --data_root (the folder containing room_02)")
+            parser.error("--exp takes exactly one --data_root "
+                         "(the folder containing room_02, or the XRF55 .npy folder for --exp xrf55)")
         args.data_root = args.data_root[0]
         return args
     if args.dataset is None:
@@ -368,8 +370,10 @@ def run_v2(args):
     print("Input Shape :", input_shape)
     print(f"Sizes       : train={info['train_size']} val={info['val_size']} test={info['test_size']}")
 
-    # BiMamba config is keyed by device name (sshar_esp / sshar_asus give the same layout)
-    model_dataset = "sshar_" + info["train_domain"][0]
+    # BiMamba config is keyed by dataset name (sshar_esp / sshar_asus give the same layout;
+    # xrf55 uses groups=9)
+    train_device = info["train_domain"][0]
+    model_dataset = "xrf55" if train_device == "xrf55" else "sshar_" + train_device
     model = get_model(
         model_name=args.model,
         input_shape=input_shape,
