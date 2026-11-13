@@ -320,3 +320,117 @@ def train(
         r["dir"] = ckpt_dirs[name]
 
     return history, results
+
+# ============================================================
+# V2: train / val / test (doc/experiment_plan_v2.md)
+# ============================================================
+# Sub-folders of save_dir, one per checkpoint:
+#   best_val   : epoch with the highest validation accuracy
+#   last_epoch : model after the final epoch
+SELECTIONS_V2 = ("best_val", "last_epoch")
+
+
+def train_v2(
+    model,
+    train_loader,
+    val_loader,
+    test_loader,
+    epochs,
+    lr,
+    device,
+    save_dir,
+):
+    """
+    Train with Adam + cross-entropy (no scheduler), select checkpoints on VAL only,
+    then evaluate the TEST set once per checkpoint after training.
+
+    Saves
+    -----
+    save_dir/history.csv              train/val loss, accuracy, macro-F1 per epoch
+    save_dir/best_val/model.pth
+    save_dir/last_epoch/model.pth
+
+    Returns
+    -------
+    history : DataFrame
+    results : {"best_val"|"last_epoch": {"epoch", "val_acc", "y_true", "y_pred", "dir"}}
+    elapsed : training time (s)
+    """
+    import copy
+
+    os.makedirs(save_dir, exist_ok=True)
+    ckpt_dirs = {name: os.path.join(save_dir, name) for name in SELECTIONS_V2}
+    for d in ckpt_dirs.values():
+        os.makedirs(d, exist_ok=True)
+
+    model = model.to(device)
+    criterion = nn.CrossEntropyLoss()
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+
+    history = []
+    best_val_acc = -1.0
+    best_epoch = None
+    best_state = None
+
+    start_time = time.time()
+    for epoch in range(1, epochs + 1):
+        train_loss, train_acc = train_one_epoch(
+            model=model, loader=train_loader, criterion=criterion,
+            optimizer=optimizer, device=device,
+        )
+        val_loss, val_acc, vy_true, vy_pred = evaluate(
+            model=model, loader=val_loader, criterion=criterion, device=device,
+        )
+        val_f1 = f1_score(vy_true, vy_pred, average="macro", zero_division=0)
+
+        history.append({
+            "epoch": epoch,
+            "train_loss": train_loss,
+            "train_acc": train_acc,
+            "val_loss": val_loss,
+            "val_acc": val_acc,
+            "val_f1_macro": val_f1,
+        })
+        print(
+            f"[{epoch:03d}/{epochs}] "
+            f"Train Loss: {train_loss:.4f}  Train Acc: {train_acc:.4f}  "
+            f"Val Loss: {val_loss:.4f}  Val Acc: {val_acc:.4f}  Val F1: {val_f1:.4f}"
+        )
+
+        # best_val: first epoch reaching the highest validation accuracy
+        if val_acc > best_val_acc:
+            best_val_acc = val_acc
+            best_epoch = epoch
+            best_state = copy.deepcopy(model.state_dict())
+            torch.save(best_state, os.path.join(ckpt_dirs["best_val"], "model.pth"))
+
+    elapsed = time.time() - start_time
+    last_state = copy.deepcopy(model.state_dict())
+    torch.save(last_state, os.path.join(ckpt_dirs["last_epoch"], "model.pth"))
+
+    history = pd.DataFrame(history)
+    history.to_csv(os.path.join(save_dir, "history.csv"), index=False)
+
+    # --------------------------------------------------------
+    # Test: evaluated once per checkpoint, after training
+    # --------------------------------------------------------
+    results = {}
+    for name, state, epoch, vacc in (
+        ("best_val", best_state, best_epoch, best_val_acc),
+        ("last_epoch", last_state, epochs, float(history["val_acc"].iloc[-1])),
+    ):
+        model.load_state_dict(state)
+        _, test_acc, y_true, y_pred = evaluate(
+            model=model, loader=test_loader, criterion=criterion, device=device,
+        )
+        results[name] = {
+            "epoch": epoch,
+            "val_acc": vacc,
+            "y_true": list(y_true),
+            "y_pred": list(y_pred),
+            "dir": ckpt_dirs[name],
+        }
+        print(f"{name:10s}: epoch {epoch:3d}  val acc {vacc:.4f}  test acc {test_acc:.4f}")
+
+    print(f"Training time: {elapsed:.1f} sec")
+    return history, results, elapsed

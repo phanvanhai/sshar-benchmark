@@ -1161,3 +1161,166 @@ def load_dataset(
         test_loader,
         info,
     )
+
+# ============================================================
+# ============================================================
+# V2 experiments (doc/experiment_plan_v2.md)
+# ============================================================
+# ============================================================
+# Room 2 only; repeat split 6/2/2; global z-score with hardcoded TRAIN statistics
+# (Appendix A, computed by norm_stats/compute_norm_stats.py).
+
+V2_ROOM = "room_02"
+V2_RX = ("rx_00", "rx_01", "rx_02")
+V2_SPLITS = ("train", "val", "test")
+
+# Label order act01..act08 -> index 0..7 (confusion matrices use this order)
+V2_LABEL_NAMES = (
+    "sitdown", "standup", "pickup", "fall",
+    "lie still", "walk", "run", "empty room",
+)
+
+# Appendix A: mean/std on the TRAIN split of room 2 (raw samples, 1000 time steps, 56 subcarriers)
+V2_NORM_STATS = {
+    "esp":       {"mean": 27.3713,   "std": 7.3189},    # ESP, 3 rx x 1 antenna
+    "asus":      {"mean": 2620.5715, "std": 640.4433},  # ASUS, 3 rx x 4 antennas
+    "asus_ant0": {"mean": 2591.4997, "std": 695.2622},  # ASUS, 3 rx x antenna 0
+}
+
+# One "domain" = (device, antennas to keep, normalization statistics key)
+#   antennas=None keeps every antenna of the device.
+V2_EXPERIMENTS = {
+    # 1: ESP32 -> ESP32
+    "esp_esp":   {"train": ("esp", None, "esp"),       "test": ("esp", None, "esp")},
+    # 2: ASUS (4 antennas) -> ASUS
+    "asus_asus": {"train": ("asus", None, "asus"),     "test": ("asus", None, "asus")},
+    # 3: ASUS (antenna 0) -> ESP32  (train + val on ASUS antenna 0, test on ESP)
+    "asus0_esp": {"train": ("asus", [0], "asus_ant0"), "test": ("esp", None, "esp")},
+}
+
+
+def v2_split_of(direction, rep):
+    """Repeat split 6/2/2: dir00 (10 reps) 1-6/7-8/9-10, directional (5 reps) 1-3/4/5."""
+    if direction == 0:
+        return "train" if rep <= 6 else ("val" if rep <= 8 else "test")
+    return "train" if rep <= 3 else ("val" if rep == 4 else "test")
+
+
+class SSHARV2Dataset(Dataset):
+    """
+    One device of room 2, one split of the v2 repeat split.
+
+    __getitem__ returns a z-scored sample:
+        shape_option="3d": (rx * ant, 56, T)       (CNN-GRU)
+        shape_option="2d": (rx * ant * 56, T)      (BiMamba)
+    With target_time, the time axis is max-pooled AFTER normalization (BiMamba).
+    """
+
+    pattern = re.compile(r"act(\d+)_pos(\d+)_dir(\d+)_rep(\d+)")
+
+    def __init__(self, root_dir, device, split, mean, std, antennas=None,
+                 shape_option="2d", target_time=None):
+        if split not in V2_SPLITS:
+            raise ValueError(f"split must be one of {V2_SPLITS}")
+        room_dirs = dict(resolve_room_dirs(root_dir, [V2_ROOM]))
+        self.room_path = room_dirs[V2_ROOM]
+        self.device = device
+        self.split = split
+        self.mean = float(mean)
+        self.std = float(std)
+        self.antennas = None if antennas is None else list(antennas)
+        self.shape_option = shape_option
+        self.target_time = target_time
+        self.samples = []
+        self._build_index()
+
+    def _build_index(self):
+        base = self.room_path / self.device / V2_RX[0]
+        for subject in scan_folders(base, "subject"):
+            for f in sorted((base / subject).iterdir()):
+                if not f.name.startswith("amp"):
+                    continue
+                m = self.pattern.search(f.name)
+                if m is None:
+                    continue
+                act, _, direction, rep = map(int, m.groups())
+                if act not in DEFAULT_LABEL_MAP or v2_split_of(direction, rep) != self.split:
+                    continue
+                self.samples.append({
+                    "label": DEFAULT_LABEL_MAP[act],
+                    "subject": subject,
+                    "files": [self.room_path / self.device / rx / subject / f.name for rx in V2_RX],
+                })
+
+    def __len__(self):
+        return len(self.samples)
+
+    def __getitem__(self, idx):
+        sample = self.samples[idx]
+        x = np.stack([np.load(f).astype(np.float32) for f in sample["files"]])  # (rx, ant, 56, T)
+        if self.antennas is not None:
+            x = x[:, self.antennas]
+        x = (x - self.mean) / self.std
+        rx, ant, sub, t = x.shape
+        if self.shape_option == "3d":
+            x = x.reshape(rx * ant, sub, t)
+        elif self.shape_option == "2d":
+            x = x.reshape(rx * ant * sub, t)
+        else:
+            raise ValueError(f"Unknown shape_option: {self.shape_option}")
+        x = torch.from_numpy(np.ascontiguousarray(x)).float()
+        if self.target_time is not None and x.shape[-1] != self.target_time:
+            x = F.adaptive_max_pool1d(x, output_size=self.target_time)
+        return x, sample["label"]
+
+
+def load_experiment_v2(exp, root_dir, batch_size=64, shape_option="2d", target_time=None,
+                       num_workers=DEFAULT_NUM_WORKERS, pin_memory=DEFAULT_PIN_MEMORY):
+    """
+    Build train / val / test loaders for one v2 experiment.
+
+    Train and val come from the training domain, test from the test domain;
+    each domain is normalized with its own hardcoded statistics (V2_NORM_STATS).
+    """
+    if exp not in V2_EXPERIMENTS:
+        raise ValueError(f"Unknown exp {exp}, expected {list(V2_EXPERIMENTS)}")
+    cfg = V2_EXPERIMENTS[exp]
+
+    def make(domain, split):
+        device, antennas, stats_key = domain
+        stats = V2_NORM_STATS[stats_key]
+        return SSHARV2Dataset(root_dir, device, split, stats["mean"], stats["std"],
+                              antennas=antennas, shape_option=shape_option, target_time=target_time)
+
+    datasets = {
+        "train": make(cfg["train"], "train"),
+        "val": make(cfg["train"], "val"),
+        "test": make(cfg["test"], "test"),
+    }
+    loaders = {
+        split: DataLoader(ds, batch_size=batch_size, shuffle=(split == "train"),
+                          num_workers=num_workers, pin_memory=pin_memory)
+        for split, ds in datasets.items()
+    }
+
+    x0, _ = datasets["train"][0]
+    xt, _ = datasets["test"][0]
+    if tuple(x0.shape) != tuple(xt.shape):
+        raise ValueError(f"train/test input shapes differ: {tuple(x0.shape)} vs {tuple(xt.shape)}")
+
+    info = {
+        "exp": exp,
+        "train_domain": cfg["train"],
+        "test_domain": cfg["test"],
+        "input_shape": tuple(x0.shape),
+        "num_classes": len(V2_LABEL_NAMES),
+        "class_names": list(V2_LABEL_NAMES),
+        "train_size": len(datasets["train"]),
+        "val_size": len(datasets["val"]),
+        "test_size": len(datasets["test"]),
+    }
+    for split, ds in datasets.items():
+        n_lab = len({s["label"] for s in ds.samples})
+        print(f"  {split:5s}: device={ds.device:4s} antennas={ds.antennas} "
+              f"mean={ds.mean} std={ds.std} samples={len(ds)} labels={n_lab}")
+    return loaders["train"], loaders["val"], loaders["test"], info

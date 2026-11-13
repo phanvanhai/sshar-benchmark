@@ -13,9 +13,9 @@ import numpy as np
 
 import torch
 
-from datasets import load_dataset
+from datasets import load_dataset, load_experiment_v2, V2_EXPERIMENTS
 from models import get_model
-from train import train
+from train import train, train_v2
 from metrics import (
     evaluate_model,
     measure_model_complexity,
@@ -60,9 +60,19 @@ def parse_args():
     )
 
     parser.add_argument(
+        "--exp",
+        type=str,
+        default=None,
+        choices=list(V2_EXPERIMENTS),
+        help="V2 experiment (doc/experiment_plan_v2.md): esp_esp (1: ESP32 -> ESP32), "
+             "asus_asus (2: ASUS 4 antennas -> ASUS), asus0_esp (3: ASUS antenna 0 -> ESP32). "
+             "When set, --dataset/--rooms/--split/--norm/--case_split are ignored.",
+    )
+
+    parser.add_argument(
         "--dataset",
         type=str,
-        required=True,
+        default=None,
         choices=[
             "ut_har",
             "xrf55",
@@ -255,6 +265,14 @@ def parse_args():
 
     args = parser.parse_args()
 
+    if args.exp is not None:
+        if len(args.data_root) != 1:
+            parser.error("--exp takes exactly one --data_root (the folder containing room_02)")
+        args.data_root = args.data_root[0]
+        return args
+    if args.dataset is None:
+        parser.error("either --exp (v2) or --dataset is required")
+
     if not args.dataset.startswith("sshar") and len(args.data_root) > 1:
         parser.error("several --data_root values are only supported for sshar_* datasets")
     if not args.dataset.startswith("sshar"):
@@ -319,8 +337,112 @@ def get_default_scheduler_cfg(model_name):
 # Main
 # ============================================================
 
+def run_v2(args):
+    """V2 experiments: train/val/test 6/2/2, hardcoded norm stats, best_val + last_epoch."""
+    set_seed(SEED)
+    if args.device == "cuda" and torch.cuda.is_available():
+        device = torch.device("cuda")
+    else:
+        device = torch.device("cpu")
+
+    print("=" * 60)
+    print("WiFi HAR Benchmark v2")
+    print("=" * 60)
+    print("Experiment :", args.exp)
+    print("Model      :", args.model)
+    print("Data root  :", args.data_root)
+    print("Device     :", device)
+    print(f"Protocol   : epochs={args.epochs} lr={args.lr} batch={args.batch_size} Adam, seed={SEED}")
+
+    if args.model == "cnn_gru":
+        shape_option, target_time = "3d", None
+    else:
+        shape_option = "2d"
+        target_time = 250 if args.model == "bimamba" else None
+
+    train_loader, val_loader, test_loader, info = load_experiment_v2(
+        args.exp, args.data_root, batch_size=args.batch_size,
+        shape_option=shape_option, target_time=target_time,
+    )
+    input_shape, num_classes = info["input_shape"], info["num_classes"]
+    print("Input Shape :", input_shape)
+    print(f"Sizes       : train={info['train_size']} val={info['val_size']} test={info['test_size']}")
+
+    # BiMamba config is keyed by device name (sshar_esp / sshar_asus give the same layout)
+    model_dataset = "sshar_" + info["train_domain"][0]
+    model = get_model(
+        model_name=args.model,
+        input_shape=input_shape,
+        num_classes=num_classes,
+        dataset=model_dataset,
+    ).to(device)
+
+    save_dir = os.path.join(args.result_root, f"{args.exp}_{args.model}")
+    os.makedirs(save_dir, exist_ok=True)
+    print("Save dir    :", save_dir)
+
+    total_params = sum(p.numel() for p in model.parameters())
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    complexity = measure_model_complexity(model=model, input_shape=input_shape)
+    save_model_complexity(
+        save_dir=save_dir, dataset=args.exp, model=args.model,
+        total_params=total_params, trainable_params=trainable_params, complexity=complexity,
+    )
+    print(f"Params      : {total_params}")
+
+    history, results, training_time = train_v2(
+        model=model,
+        train_loader=train_loader,
+        val_loader=val_loader,
+        test_loader=test_loader,
+        epochs=args.epochs,
+        lr=args.lr,
+        device=device,
+        save_dir=save_dir,
+    )
+
+    extra = {
+        "experiment": args.exp,
+        "train_domain": {"device": info["train_domain"][0], "antennas": info["train_domain"][1],
+                         "norm_stats": info["train_domain"][2]},
+        "test_domain": {"device": info["test_domain"][0], "antennas": info["test_domain"][1],
+                        "norm_stats": info["test_domain"][2]},
+        "class_names": info["class_names"],
+        "lr": args.lr,
+        "batch_size": args.batch_size,
+        "seed": SEED,
+    }
+    for selection, r in results.items():
+        print(f"\n>>> {selection} (epoch {r['epoch']}, val acc {r['val_acc']:.4f}) -> {r['dir']}")
+        evaluate_model(
+            history=history,
+            y_true=r["y_true"],
+            y_pred=r["y_pred"],
+            save_dir=r["dir"],
+            dataset=args.exp,
+            model=args.model,
+            best_epoch=r["epoch"],
+            train_size=info["train_size"],
+            test_size=info["test_size"],
+            training_time=training_time,
+            class_names=info["class_names"],
+            total_params=total_params,
+            trainable_params=trainable_params,
+            complexity=complexity,
+            selection=selection,
+            total_epochs=args.epochs,
+            val_size=info["val_size"],
+            extra=dict(extra, val_acc=r["val_acc"]),
+        )
+
+    print("\nFinished. Result folder:", save_dir)
+
+
 def main():
     args = parse_args()
+    if args.exp is not None:
+        run_v2(args)
+        return
     # --------------------------------------------------------
     # Reproducibility
     # --------------------------------------------------------

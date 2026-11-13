@@ -78,7 +78,7 @@ def measure_model_complexity(model, input_shape):
 # ============================================================
 # Compute Metrics
 # ============================================================
-def compute_metrics(y_true, y_pred):
+def compute_metrics(y_true, y_pred, labels=None):
     """
     Compute classification metrics.
 
@@ -140,6 +140,7 @@ def compute_metrics(y_true, y_pred):
     cm = confusion_matrix(
         y_true,
         y_pred,
+        labels=labels,
     )
 
     report = classification_report(
@@ -169,6 +170,8 @@ def save_metrics(
     complexity=None,
     selection=None,
     total_epochs=None,
+    val_size=None,
+    extra=None,
 ):
 
     data = {
@@ -194,6 +197,8 @@ def save_metrics(
             float(metrics["f1_weighted"]),
         "train_size":
             int(train_size),
+        "val_size":
+            None if val_size is None else int(val_size),
         "test_size":
             int(test_size),
         "training_time":
@@ -211,6 +216,9 @@ def save_metrics(
         "flops_per_sample":
             None if complexity is None else complexity.get("flops_per_sample"),
     }
+
+    if extra:
+        data.update(extra)
 
     with open(
         os.path.join(
@@ -318,6 +326,7 @@ def save_confusion_matrix(
     save_dir,
     cm,
     class_names=None,
+    filename="confusion_matrix.csv",
 ):
 
     if class_names is None:
@@ -337,7 +346,7 @@ def save_confusion_matrix(
     df.to_csv(
         os.path.join(
             save_dir,
-            "confusion_matrix.csv",
+            filename,
         )
 
     )
@@ -362,6 +371,9 @@ def plot_learning_curve(
     if isinstance(history, str):
         history = pd.read_csv(history)
 
+    ev = "val" if "val_loss" in history.columns else "test"
+    ev_label = "Val" if ev == "val" else "Test"
+
     plt.figure(figsize=(10, 4))
     # --------------------------------------------------------
     # Loss
@@ -377,8 +389,8 @@ def plot_learning_curve(
 
     plt.plot(
         history["epoch"],
-        history["test_loss"],
-        label="Test",
+        history[f"{ev}_loss"],
+        label=ev_label,
         linewidth=2,
     )
 
@@ -401,8 +413,8 @@ def plot_learning_curve(
 
     plt.plot(
         history["epoch"],
-        history["test_acc"],
-        label="Test",
+        history[f"{ev}_acc"],
+        label=ev_label,
         linewidth=2,
     )
 
@@ -430,6 +442,9 @@ def plot_confusion_matrix(
     save_dir,
     cm,
     class_names=None,
+    filename="confusion_matrix.png",
+    fmt="d",
+    title="Confusion Matrix",
 ):
 
     if class_names is None:
@@ -445,7 +460,7 @@ def plot_confusion_matrix(
     sns.heatmap(
         cm,
         annot=True,
-        fmt="d",
+        fmt=fmt,
         cmap="Blues",
         xticklabels=class_names,
         yticklabels=class_names,
@@ -453,12 +468,12 @@ def plot_confusion_matrix(
 
     plt.xlabel("Predicted")
     plt.ylabel("True")
-    plt.title("Confusion Matrix")
+    plt.title(title)
     plt.tight_layout()
     plt.savefig(
         os.path.join(
             save_dir,
-            "confusion_matrix.png",
+            filename,
         ),
         dpi=300,
     )
@@ -487,6 +502,8 @@ def evaluate_model(
     complexity=None,
     selection=None,
     total_epochs=None,
+    val_size=None,
+    extra=None,
 ):
     """
     Save all evaluation results.
@@ -497,8 +514,10 @@ def evaluate_model(
     metrics.json
     predictions.csv
     classification_report.csv
-    confusion_matrix.csv
+    confusion_matrix.csv              counts
     confusion_matrix.png
+    confusion_matrix_normalized.csv   row-normalized (each true label sums to 1)
+    confusion_matrix_normalized.png
     learning_curve.png
     """
 
@@ -509,10 +528,14 @@ def evaluate_model(
     # --------------------------------------------------------
     # Metrics
     # --------------------------------------------------------
+    labels = None if class_names is None else list(range(len(class_names)))
     metrics, cm, report = compute_metrics(
         y_true,
         y_pred,
+        labels=labels,
     )
+    row_sum = cm.sum(axis=1, keepdims=True)
+    cm_norm = np.divide(cm, row_sum, out=np.zeros(cm.shape, dtype=float), where=row_sum > 0)
     # --------------------------------------------------------
     # Save files
     # --------------------------------------------------------
@@ -530,6 +553,8 @@ def evaluate_model(
         complexity=complexity,
         selection=selection,
         total_epochs=total_epochs,
+        val_size=val_size,
+        extra=extra,
     )
 
     save_predictions(
@@ -553,6 +578,22 @@ def evaluate_model(
         save_dir,
         cm,
         class_names,
+    )
+
+    save_confusion_matrix(
+        save_dir,
+        np.round(cm_norm, 4),
+        class_names,
+        filename="confusion_matrix_normalized.csv",
+    )
+
+    plot_confusion_matrix(
+        save_dir,
+        cm_norm,
+        class_names,
+        filename="confusion_matrix_normalized.png",
+        fmt=".2f",
+        title="Confusion Matrix (row-normalized)",
     )
 
     plot_learning_curve(

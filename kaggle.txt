@@ -1,38 +1,48 @@
+# Notebook Kaggle cho v2 (copy từ doc/experiment_plan_v2.md, Phụ lục B)
+
+# ===== Cell 1: lấy code =====
 import os, subprocess
 os.environ["PYDEVD_DISABLE_FILE_VALIDATION"] = "1"
 os.chdir("/kaggle/working")
 
 REPO_URL, REPO = "https://github.com/phanvanhai/sshar-benchmark.git", "sshar-benchmark"
+BRANCH = "v2"                 # nhánh code v2 (master = v1)
 if not os.path.exists(REPO):
-    subprocess.run(f"git clone {REPO_URL} {REPO}", shell=True, check=True)
+    subprocess.run(f"git clone -b {BRANCH} {REPO_URL} {REPO}", shell=True, check=True)
 else:
-    subprocess.run("git pull", shell=True, check=True, cwd=REPO)
+    subprocess.run(f"git fetch origin && git checkout {BRANCH} && git pull origin {BRANCH}",
+                   shell=True, check=True, cwd=REPO)
 os.chdir(REPO)
-print("[*] cwd:", os.getcwd(), "|", subprocess.run("git log --oneline -1", shell=True, capture_output=True, text=True).stdout)
-# phải thấy commit f6cac55 (--norm) hoặc mới hơn
+print(subprocess.run("git branch --show-current && git log --oneline -1",
+                     shell=True, capture_output=True, text=True).stdout)   # phải thấy: v2
 
+# ===== Cell 2: cài thư viện =====
 !pip install -q -r requirements.txt
 !pip install -q --no-build-isolation mamba-ssm
 
-import os
-R1 = "/kaggle/input/datasets/phanvanhai/csi-room-01"   # <-- sửa tên dataset room 1
-R2 = "/kaggle/input/datasets/phanvanhai/csi-room-02-0707"
-for r in (R1, R2):
-    print(r, "->", sorted(os.listdir(r)))   # phải thấy room_01 / room_02
+# ===== Cell 3: cấu hình =====
+DATA_ROOT   = "/kaggle/input/datasets/phanvanhai/csi-room-02-0707"   # <-- sửa: thư mục chứa room_02
+RESULT_ROOT = "/kaggle/working/results"
+print(DATA_ROOT, "->", sorted(os.listdir(DATA_ROOT)))               # phải thấy room_02
 
-ROOMS = "1,2"                 # "1,2" = gộp 2 phòng | "1" = chỉ phòng 1 | "2" = chỉ phòng 2
-NORM = "sample"               # "sample" = z-score từng mẫu, riêng từng rx | "sample_all" = từng mẫu, gộp 3 rx | "global" = mean/std tập train
-COMMON = f"--data_root {R1} {R2} --rooms={ROOMS} --split=repeat --norm={NORM}"
-RUNS = [                      # bỏ comment để chọn run, chia 2 phiên nếu sợ quá 12h
-    ("sshar_esp",  "cnn_gru"),
-    ("sshar_esp",  "bimamba"),
-    # ("sshar_asus", "cnn_gru"),
-    # ("sshar_asus", "bimamba"),
+MODELS = [
+    "cnn_gru",
+    "bimamba",
 ]
-for ds, model in RUNS:
-    print(f"\n{'#'*20} {ds} / {model} / rooms={ROOMS} / norm={NORM} {'#'*20}")
-    !python main.py {COMMON} --dataset={ds} --model={model}
 
-ZIP = f"/kaggle/working/results_room{ROOMS.replace(',', '')}_repeat_norm{NORM}.zip"
-!zip -qr {ZIP} results
+EXPERIMENTS = [               # bỏ comment thí nghiệm cần chạy
+    "esp_esp",                # 1: ESP32 -> ESP32
+    # "asus_asus",            # 2: ASUS (4 ăng-ten) -> ASUS
+    # "asus0_esp",            # 3: ASUS (ăng-ten 0) -> ESP32
+]
+
+# ===== Cell 4: chạy =====
+for exp in EXPERIMENTS:
+    for model in MODELS:
+        print(f"\n{'#' * 20} exp={exp} / model={model} {'#' * 20}")
+        !python main.py --exp {exp} --model {model} --data_root {DATA_ROOT} --result_root {RESULT_ROOT}
+
+# ===== Cell 5: nén kết quả để tải về =====
+ZIP = "/kaggle/working/results_v2_" + "_".join(EXPERIMENTS) + ".zip"
+!zip -qr {ZIP} {RESULT_ROOT}
 print("Saved:", ZIP)
