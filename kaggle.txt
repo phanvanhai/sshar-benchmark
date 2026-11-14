@@ -18,11 +18,11 @@ print(subprocess.run("git branch --show-current && git log --oneline -1",
 
 # ===== Cell 2: cài thư viện =====
 !pip install -q -r requirements.txt
-!pip install -q --no-build-isolation mamba-ssm
+!pip install -q --no-build-isolation mamba-ssm   # chỉ cần cho bimamba (biên dịch ~50 phút); MODELS chỉ có cnn_gru -> comment dòng này
 
 # ===== Cell 3: cấu hình =====
-ROOM2_ROOT  = "/kaggle/input/datasets/phanvanhai/csi-room-02-0707"   # <-- sửa: thư mục chứa room_02 (thí nghiệm 1-3)
-XRF55_ROOT  = "/kaggle/input/<xrf55-dataset>"                        # <-- sửa: thư mục chứa file .npy XRF55 (thí nghiệm 4)
+ROOM2_ROOT  = "/kaggle/input/datasets/phanvanhai/cmr-har-room2" # <-- sửa: thư mục chứa room_02 (thí nghiệm 1-3)
+XRF55_ROOT  = "/kaggle/input/datasets/phanvanhai/xrf55-8act/XRF55_8act_dataset" # <-- sửa: thư mục chứa file .npy XRF55 (thí nghiệm 4)
 RESULT_ROOT = "/kaggle/working/results"
 
 MODELS = [

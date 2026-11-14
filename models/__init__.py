@@ -7,7 +7,8 @@ from .resnet1d import resnet18_1d
 from .bilstm import BiLSTM
 from .vit import ViT
 from .cnn_gru import CNN_GRU
-from .bimamba import BiMamba
+# BiMamba is imported lazily in get_model(): it needs mamba_ssm (CUDA build),
+# which is not required for the other models.
 
 SUPPORTED_MODELS = [
     "mlp",
@@ -75,6 +76,7 @@ def get_model(model_name, input_shape, num_classes, **kwargs):
         )
 
     if model_name == "bimamba":
+        from .bimamba import BiMamba  # lazy: requires mamba_ssm
         return BiMamba(
             input_shape=input_shape,
             num_classes=num_classes,
