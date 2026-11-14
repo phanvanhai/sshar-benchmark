@@ -35,6 +35,7 @@ EXPERIMENTS = [               # bỏ comment thí nghiệm cần chạy
     # "asus_asus",            # 2: ASUS (4 ăng-ten) -> ASUS
     # "asus0_esp",            # 3: ASUS (ăng-ten 0) -> ESP32
     # "xrf55",                # 4: XRF55 -> XRF55
+    # "esp_asus0",            # 5: ESP32 -> ASUS (ăng-ten 0)
 ]
 
 def data_root_of(exp):

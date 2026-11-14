@@ -1208,6 +1208,9 @@ V2_EXPERIMENTS = {
     # 4: XRF55 -> XRF55  (--data_root = folder holding the XRF55 .npy files)
     "xrf55":     {"train": ("xrf55", None, "xrf55"),   "test": ("xrf55", None, "xrf55"),
                   "class_names": V2_LABEL_NAMES_XRF55},
+    # 5: ESP32 -> ASUS (antenna 0)  (train + val on ESP, test on ASUS antenna 0)
+    "esp_asus0": {"train": ("esp", None, "esp"),       "test": ("asus", [0], "asus_ant0"),
+                  "class_names": V2_LABEL_NAMES},
 }
 
 # XRF55: 20 repetitions per (user, action) -> 6/2/2 = rep 1-12 / 13-16 / 17-20
