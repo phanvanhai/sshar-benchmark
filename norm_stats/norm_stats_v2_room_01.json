@@ -1,0 +1,38 @@
+{
+  "room": "room_01",
+  "dataset_root": "D:\\workspace\\HUST\\Personal\\WiFi-Sensing\\Code\\CodeForPaper\\benchmark\\data\\sshar_amp_interp\\room_01",
+  "split": "train: dir00 rep1-6, directional rep1-3 (labels 1-8)",
+  "note": "global z-score stats on raw samples (1000 time steps), 56 subcarriers",
+  "stats": {
+    "esp": {
+      "mean": 27.545565334629966,
+      "std": 6.845901687087935,
+      "n_samples": 3840
+    },
+    "asus": {
+      "mean": 2597.4007161734344,
+      "std": 816.85202402035,
+      "n_samples": 3840
+    },
+    "asus_ant0": {
+      "mean": 2528.9107311199773,
+      "std": 738.506353556759,
+      "n_samples": 3840
+    },
+    "asus_ant1": {
+      "mean": 2582.190669655432,
+      "std": 803.1685079829547,
+      "n_samples": 3840
+    },
+    "asus_ant2": {
+      "mean": 2676.417076307739,
+      "std": 732.5144710607858,
+      "n_samples": 3840
+    },
+    "asus_ant3": {
+      "mean": 2602.0843876105882,
+      "std": 964.7551162326831,
+      "n_samples": 3840
+    }
+  }
+}

@@ -21,9 +21,17 @@ print(subprocess.run("git branch --show-current && git log --oneline -1",
 !pip install -q --no-build-isolation mamba-ssm   # chỉ cần cho bimamba (biên dịch ~50 phút); MODELS chỉ có cnn_gru -> comment dòng này
 
 # ===== Cell 3: cấu hình =====
-ROOM2_ROOT  = "/kaggle/input/datasets/phanvanhai/cmr-har-room2" # <-- sửa: thư mục chứa room_02 (thí nghiệm 1-3)
+ROOM_ROOTS = {                # thư mục CHỨA room_0X (thí nghiệm 1, 2, 3, 5)
+    "room_01": "/kaggle/input/datasets/phanvanhai/cmr-har-room1",  # <-- sửa: thư mục chứa room_01
+    "room_02": "/kaggle/input/datasets/phanvanhai/cmr-har-room2",  # <-- sửa: thư mục chứa room_02
+}
 XRF55_ROOT  = "/kaggle/input/datasets/phanvanhai/xrf55-8act/XRF55_8act_dataset" # <-- sửa: thư mục chứa file .npy XRF55 (thí nghiệm 4)
 RESULT_ROOT = "/kaggle/working/results"
+
+ROOMS = [                     # phòng cần chạy (XRF55 không phụ thuộc phòng)
+    # "room_01",
+    "room_02",
+]
 
 MODELS = [
     "cnn_gru",
@@ -34,25 +42,29 @@ EXPERIMENTS = [               # bỏ comment thí nghiệm cần chạy
     "esp_esp",                # 1: ESP32 -> ESP32
     # "asus_asus",            # 2: ASUS (4 ăng-ten) -> ASUS
     # "asus0_esp",            # 3: ASUS (ăng-ten 0) -> ESP32
-    # "xrf55",                # 4: XRF55 -> XRF55
+    # "xrf55",                # 4: XRF55 -> XRF55 (chạy 1 lần, bỏ qua ROOMS)
     # "esp_asus0",            # 5: ESP32 -> ASUS (ăng-ten 0)
 ]
 
-def data_root_of(exp):
-    return XRF55_ROOT if exp == "xrf55" else ROOM2_ROOT
+RUNS = []                     # (phòng, thí nghiệm, data_root)
+for exp in EXPERIMENTS:
+    if exp == "xrf55":
+        RUNS.append((None, exp, XRF55_ROOT))
+    else:
+        RUNS += [(room, exp, ROOM_ROOTS[room]) for room in ROOMS]
 
-for exp in EXPERIMENTS:       # kiểm tra đường dẫn: room 2 phải thấy room_02, XRF55 phải thấy file .npy
-    items = sorted(os.listdir(data_root_of(exp)))
-    print(exp, "->", data_root_of(exp), ":", items[:3], "...", len(items), "mục")
+for room, exp, root in RUNS:  # kiểm tra đường dẫn: phải thấy room_0X, hoặc file .npy với XRF55
+    items = sorted(os.listdir(root))
+    print(room, exp, "->", root, ":", items[:3], "...", len(items), "mục")
 
 # ===== Cell 4: chạy =====
-for exp in EXPERIMENTS:
-    data_root = data_root_of(exp)
+for room, exp, root in RUNS:
+    room_arg = "" if room is None else f"--room {room}"
     for model in MODELS:
-        print(f"\n{'#' * 20} exp={exp} / model={model} {'#' * 20}")
-        !python main.py --exp {exp} --model {model} --data_root {data_root} --result_root {RESULT_ROOT}
+        print(f"\n{'#' * 20} room={room} / exp={exp} / model={model} {'#' * 20}")
+        !python main.py --exp {exp} {room_arg} --model {model} --data_root {root} --result_root {RESULT_ROOT}
 
 # ===== Cell 5: nén kết quả để tải về =====
-ZIP = "/kaggle/working/results_v2_" + "_".join(EXPERIMENTS) + ".zip"
+ZIP = "/kaggle/working/results_v2_" + "_".join(ROOMS + EXPERIMENTS) + ".zip"
 !zip -qr {ZIP} {RESULT_ROOT}
 print("Saved:", ZIP)

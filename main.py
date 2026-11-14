@@ -13,7 +13,7 @@ import numpy as np
 
 import torch
 
-from datasets import load_dataset, load_experiment_v2, V2_EXPERIMENTS
+from datasets import load_dataset, load_experiment_v2, V2_EXPERIMENTS, V2_ROOMS, V2_DEFAULT_ROOM
 from models import get_model
 from train import train, train_v2
 from metrics import (
@@ -66,8 +66,17 @@ def parse_args():
         choices=list(V2_EXPERIMENTS),
         help="V2 experiment (doc/experiment_plan_v2.md): esp_esp (1: ESP32 -> ESP32), "
              "asus_asus (2: ASUS 4 antennas -> ASUS), asus0_esp (3: ASUS antenna 0 -> ESP32), "
-             "xrf55 (4: XRF55 -> XRF55; --data_root = folder of the XRF55 .npy files). "
+             "xrf55 (4: XRF55 -> XRF55; --data_root = folder of the XRF55 .npy files), "
+             "esp_asus0 (5: ESP32 -> ASUS antenna 0). "
              "When set, --dataset/--rooms/--split/--norm/--case_split are ignored.",
+    )
+
+    parser.add_argument(
+        "--room",
+        type=str,
+        default=V2_DEFAULT_ROOM,
+        choices=list(V2_ROOMS),
+        help="V2 only: room to use (--data_root = folder containing it). Ignored for --exp xrf55.",
     )
 
     parser.add_argument(
@@ -269,7 +278,7 @@ def parse_args():
     if args.exp is not None:
         if len(args.data_root) != 1:
             parser.error("--exp takes exactly one --data_root "
-                         "(the folder containing room_02, or the XRF55 .npy folder for --exp xrf55)")
+                         "(the folder containing --room, or the XRF55 .npy folder for --exp xrf55)")
         args.data_root = args.data_root[0]
         return args
     if args.dataset is None:
@@ -350,7 +359,9 @@ def run_v2(args):
     print("=" * 60)
     print("WiFi HAR Benchmark v2")
     print("=" * 60)
+    room = None if args.exp == "xrf55" else args.room
     print("Experiment :", args.exp)
+    print("Room       :", room if room else "- (XRF55)")
     print("Model      :", args.model)
     print("Data root  :", args.data_root)
     print("Device     :", device)
@@ -364,7 +375,7 @@ def run_v2(args):
 
     train_loader, val_loader, test_loader, info = load_experiment_v2(
         args.exp, args.data_root, batch_size=args.batch_size,
-        shape_option=shape_option, target_time=target_time,
+        shape_option=shape_option, target_time=target_time, room=args.room,
     )
     input_shape, num_classes = info["input_shape"], info["num_classes"]
     print("Input Shape :", input_shape)
@@ -381,7 +392,8 @@ def run_v2(args):
         dataset=model_dataset,
     ).to(device)
 
-    save_dir = os.path.join(args.result_root, f"{args.exp}_{args.model}")
+    run_name = f"{args.exp}_{args.model}" if room is None else f"{room}_{args.exp}_{args.model}"
+    save_dir = os.path.join(args.result_root, run_name)
     os.makedirs(save_dir, exist_ok=True)
     print("Save dir    :", save_dir)
 
@@ -407,6 +419,7 @@ def run_v2(args):
 
     extra = {
         "experiment": args.exp,
+        "room": room,
         "train_domain": {"device": info["train_domain"][0], "antennas": info["train_domain"][1],
                          "norm_stats": info["train_domain"][2]},
         "test_domain": {"device": info["test_domain"][0], "antennas": info["test_domain"][1],

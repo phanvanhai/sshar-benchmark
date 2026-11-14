@@ -1,4 +1,4 @@
-DATASET_ROOT = r"D:\workspace\HUST\Personal\WiFi-Sensing\Code\CodeForPaper\benchmark\data\sshar_amp_interp\room_02"
+DATASET_ROOT = r"D:\workspace\HUST\Personal\WiFi-Sensing\Code\CodeForPaper\benchmark\data\sshar_amp_interp\room_01"
 
 """
 Tính sẵn các cặp mean/std (z-score toàn cục) trên TẬP TRAIN theo kế hoạch v2
@@ -9,13 +9,14 @@ Tập train (chia theo lần lặp 6/2/2):
     hành động có hướng (dir01/02, 5 lần lặp) : rep 1-3
 
 Tính trên dữ liệu gốc (đủ 1000 điểm thời gian), gộp mọi rx, mọi subcarrier, 8 lớp:
-    esp        : ESP32, 3 rx x 1 ăng-ten           -> thí nghiệm 1, test của thí nghiệm 3
-    asus       : ASUS, 3 rx x 4 ăng-ten            -> thí nghiệm 2
-    asus_ant0  : ASUS, 3 rx x ăng-ten 0            -> train/val của thí nghiệm 3
+    esp        : ESP32, 3 rx x 1 ăng-ten   -> thí nghiệm 1; test của 3; train/val của 5
+    asus       : ASUS, 3 rx x 4 ăng-ten    -> thí nghiệm 2
+    asus_ant0  : ASUS, 3 rx x ăng-ten 0    -> train/val của thí nghiệm 3; test của 5
     asus_ant1..3: dự phòng
 
+DATASET_ROOT là thư mục của một phòng (room_01 hoặc room_02); đổi dòng 1 để tính cho phòng khác.
 Cấu trúc dữ liệu: DATASET_ROOT/<device>/<rx>/<subject>/amp_actXX_posXX_dirXX_repXX.npy
-Kết quả: norm_stats_v2.json (cùng thư mục với file này).
+Kết quả: norm_stats_v2_<tên phòng>.json, ví dụ norm_stats_v2_room_01.json (cùng thư mục với file này).
 
 Chạy:
     python norm_stats/compute_norm_stats.py
@@ -30,7 +31,8 @@ import numpy as np
 PATTERN = re.compile(r"act(\d+)_pos(\d+)_dir(\d+)_rep(\d+)")
 RX = ["rx_00", "rx_01", "rx_02"]
 LABELS = set(range(1, 9))
-OUT_FILE = Path(__file__).resolve().parent / "norm_stats_v2.json"
+ROOM = Path(DATASET_ROOT).name                       # room_01 / room_02
+OUT_FILE = Path(__file__).resolve().parent / f"norm_stats_v2_{ROOM}.json"
 
 
 def is_train(direction, rep):
@@ -84,6 +86,7 @@ def main():
         stats[f"asus_ant{k}"] = dict(zip(("mean", "std"), mean_std(s[k], sq[k], c[k])), n_samples=n)
 
     OUT_FILE.write_text(json.dumps({
+        "room": ROOM,
         "dataset_root": DATASET_ROOT,
         "split": "train: dir00 rep1-6, directional rep1-3 (labels 1-8)",
         "note": "global z-score stats on raw samples (1000 time steps), 56 subcarriers",

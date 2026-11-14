@@ -1167,10 +1167,11 @@ def load_dataset(
 # V2 experiments (doc/experiment_plan_v2.md)
 # ============================================================
 # ============================================================
-# Room 2 only; repeat split 6/2/2; global z-score with hardcoded TRAIN statistics
-# (Appendix A, computed by norm_stats/compute_norm_stats.py).
+# One room per run (room_01 or room_02); repeat split 6/2/2; global z-score with
+# hardcoded TRAIN statistics of that room (Appendix A, norm_stats/compute_norm_stats.py).
 
-V2_ROOM = "room_02"
+V2_ROOMS = ("room_01", "room_02")
+V2_DEFAULT_ROOM = "room_02"
 V2_RX = ("rx_00", "rx_01", "rx_02")
 V2_SPLITS = ("train", "val", "test")
 
@@ -1185,13 +1186,35 @@ V2_LABEL_NAMES_XRF55 = (
     "play ukulele", "walk", "run", "play drum",
 )
 
-# Appendix A: mean/std on the TRAIN split (raw samples, 1000 time steps)
+# Appendix A: mean/std on the TRAIN split (raw samples, 1000 time steps), per room.
+#   esp: 3 rx x 1 antenna x 56 sub; asus: 3 rx x 4 antennas x 56 sub; asus_ant0: antenna 0 only
+#   None = not computed yet (run norm_stats/compute_norm_stats.py, then fill in).
 V2_NORM_STATS = {
-    "esp":       {"mean": 27.3713,   "std": 7.3189},    # room 2 ESP, 3 rx x 1 antenna x 56 sub
-    "asus":      {"mean": 2620.5715, "std": 640.4433},  # room 2 ASUS, 3 rx x 4 antennas x 56 sub
-    "asus_ant0": {"mean": 2591.4997, "std": 695.2622},  # room 2 ASUS, 3 rx x antenna 0 x 56 sub
-    "xrf55":     {"mean": 9.2577,    "std": 4.8905},    # XRF55, 3 rx x 3 antennas x 30 sub
+    "room_01": {                                    # norm_stats/norm_stats_v2_room_01.json
+        "esp":       {"mean": 27.5456,   "std": 6.8459},
+        "asus":      {"mean": 2597.4007, "std": 816.8520},
+        "asus_ant0": {"mean": 2528.9107, "std": 738.5064},
+    },
+    "room_02": {                                    # norm_stats/norm_stats_v2_room_02.json
+        "esp":       {"mean": 27.3713,   "std": 7.3189},
+        "asus":      {"mean": 2620.5715, "std": 640.4433},
+        "asus_ant0": {"mean": 2591.4997, "std": 695.2622},
+    },
+    "xrf55":         {"mean": 9.2577,    "std": 4.8905},   # XRF55, 3 rx x 3 antennas x 30 sub
 }
+
+
+def v2_norm_stats(room, stats_key):
+    """mean/std for one domain; XRF55 ignores the room."""
+    if stats_key == "xrf55":
+        return V2_NORM_STATS["xrf55"]
+    if room not in V2_ROOMS:
+        raise ValueError(f"room must be one of {V2_ROOMS}, got {room}")
+    stats = V2_NORM_STATS[room][stats_key]
+    if stats is None:
+        raise ValueError(f"mean/std for {room}/{stats_key} not set yet: run "
+                         f"norm_stats/compute_norm_stats.py on {room} and fill V2_NORM_STATS")
+    return stats
 
 # One "domain" = (device, antennas to keep, normalization statistics key)
 #   antennas=None keeps every antenna of the device; device "xrf55" = XRF55 dataset.
@@ -1282,7 +1305,7 @@ def v2_split_of(direction, rep):
 
 class SSHARV2Dataset(Dataset):
     """
-    One device of room 2, one split of the v2 repeat split.
+    One device of one room (room_01 / room_02), one split of the v2 repeat split.
 
     __getitem__ returns a z-scored sample:
         shape_option="3d": (rx * ant, 56, T)       (CNN-GRU)
@@ -1293,11 +1316,14 @@ class SSHARV2Dataset(Dataset):
     pattern = re.compile(r"act(\d+)_pos(\d+)_dir(\d+)_rep(\d+)")
 
     def __init__(self, root_dir, device, split, mean, std, antennas=None,
-                 shape_option="2d", target_time=None):
+                 shape_option="2d", target_time=None, room=V2_DEFAULT_ROOM):
         if split not in V2_SPLITS:
             raise ValueError(f"split must be one of {V2_SPLITS}")
-        room_dirs = dict(resolve_room_dirs(root_dir, [V2_ROOM]))
-        self.room_path = room_dirs[V2_ROOM]
+        if room not in V2_ROOMS:
+            raise ValueError(f"room must be one of {V2_ROOMS}, got {room}")
+        room_dirs = dict(resolve_room_dirs(root_dir, [room]))
+        self.room = room
+        self.room_path = room_dirs[room]
         self.device = device
         self.split = split
         self.mean = float(mean)
@@ -1349,12 +1375,14 @@ class SSHARV2Dataset(Dataset):
 
 
 def load_experiment_v2(exp, root_dir, batch_size=64, shape_option="2d", target_time=None,
-                       num_workers=DEFAULT_NUM_WORKERS, pin_memory=DEFAULT_PIN_MEMORY):
+                       num_workers=DEFAULT_NUM_WORKERS, pin_memory=DEFAULT_PIN_MEMORY,
+                       room=V2_DEFAULT_ROOM):
     """
-    Build train / val / test loaders for one v2 experiment.
+    Build train / val / test loaders for one v2 experiment in one room.
 
     Train and val come from the training domain, test from the test domain;
-    each domain is normalized with its own hardcoded statistics (V2_NORM_STATS).
+    each domain is normalized with its own hardcoded statistics of that room
+    (V2_NORM_STATS). The room is ignored for exp "xrf55".
     """
     if exp not in V2_EXPERIMENTS:
         raise ValueError(f"Unknown exp {exp}, expected {list(V2_EXPERIMENTS)}")
@@ -1362,12 +1390,13 @@ def load_experiment_v2(exp, root_dir, batch_size=64, shape_option="2d", target_t
 
     def make(domain, split):
         device, antennas, stats_key = domain
-        stats = V2_NORM_STATS[stats_key]
+        stats = v2_norm_stats(room, stats_key)
         if device == "xrf55":
             return XRF55V2Dataset(root_dir, split, stats["mean"], stats["std"],
                                   shape_option=shape_option, target_time=target_time)
         return SSHARV2Dataset(root_dir, device, split, stats["mean"], stats["std"],
-                              antennas=antennas, shape_option=shape_option, target_time=target_time)
+                              antennas=antennas, shape_option=shape_option, target_time=target_time,
+                              room=room)
 
     datasets = {
         "train": make(cfg["train"], "train"),
@@ -1387,6 +1416,7 @@ def load_experiment_v2(exp, root_dir, batch_size=64, shape_option="2d", target_t
 
     info = {
         "exp": exp,
+        "room": None if exp == "xrf55" else room,
         "train_domain": cfg["train"],
         "test_domain": cfg["test"],
         "input_shape": tuple(x0.shape),
