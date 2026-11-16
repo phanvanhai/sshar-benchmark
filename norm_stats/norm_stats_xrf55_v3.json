@@ -1,0 +1,42 @@
+{
+  "dataset_root": "D:\\workspace\\HUST\\Personal\\WiFi-Sensing\\Code\\CodeForPaper\\benchmark\\data\\XRF55_8act_dataset",
+  "split": "v3 5-fold over repetitions; groups {1-4}..{17-20}; fold k: test=group k, val=group k-1 (cyclic), train=other 3 groups (labels 1-8, all users)",
+  "note": "global z-score stats on raw samples (270 x 1000); fold5 == v2 split",
+  "stats": {
+    "fold1": {
+      "xrf55": {
+        "mean": 9.257655564999778,
+        "std": 4.888213079546834,
+        "n_samples": 2880
+      }
+    },
+    "fold2": {
+      "xrf55": {
+        "mean": 9.261583119605922,
+        "std": 4.887300951982241,
+        "n_samples": 2880
+      }
+    },
+    "fold3": {
+      "xrf55": {
+        "mean": 9.264487545855298,
+        "std": 4.888903996280846,
+        "n_samples": 2880
+      }
+    },
+    "fold4": {
+      "xrf55": {
+        "mean": 9.263404741169461,
+        "std": 4.8929135195486895,
+        "n_samples": 2880
+      }
+    },
+    "fold5": {
+      "xrf55": {
+        "mean": 9.257704017655165,
+        "std": 4.890460355733662,
+        "n_samples": 2880
+      }
+    }
+  }
+}

@@ -12,6 +12,7 @@ Supported datasets
 """
 
 from pathlib import Path
+import json
 import os
 import glob
 import re
@@ -1216,6 +1217,59 @@ def v2_norm_stats(room, stats_key):
                          f"norm_stats/compute_norm_stats.py on {room} and fill V2_NORM_STATS")
     return stats
 
+
+# ------------------------------------------------------------
+# v3: 5-fold cross-validation over repetitions (doc/experiment_plan_v3.md)
+# ------------------------------------------------------------
+# Repetitions are cut into 5 groups:
+#   dir00 (10 reps): {1,2} {3,4} {5,6} {7,8} {9,10}
+#   directional (5 reps): {1} {2} {3} {4} {5}
+#   XRF55 (20 reps): {1-4} {5-8} {9-12} {13-16} {17-20}
+# Fold k: test = group k, val = group k-1 (cyclic), train = the other 3 groups (6/2/2).
+# Fold 5 (train groups 1-3, val 4, test 5) is exactly the v2 split.
+V3_FOLDS = (1, 2, 3, 4, 5)
+V3_EXPERIMENTS = ("esp_esp", "asus_asus", "xrf55")
+V3_NORM_DIR = Path(__file__).resolve().parent / "norm_stats"
+
+
+def v3_repeat_group(direction, rep):
+    """Repetition group 1..5 of an SSHAR sample (dir00: 2 reps per group, directional: 1)."""
+    return (rep + 1) // 2 if direction == 0 else rep
+
+
+def xrf55_repeat_group(rep):
+    """Repetition group 1..5 of an XRF55 sample (4 reps per group)."""
+    return (rep + 3) // 4
+
+
+def v3_split_of_group(group, fold):
+    if fold not in V3_FOLDS:
+        raise ValueError(f"fold must be one of {V3_FOLDS}, got {fold}")
+    if group == fold:
+        return "test"
+    if group == (fold - 2) % 5 + 1:
+        return "val"
+    return "train"
+
+
+def v3_norm_stats(room, stats_key, fold):
+    """
+    mean/std of one domain for one fold, read from the JSON written by
+    norm_stats/compute_norm_stats_v3.py (rooms) / compute_norm_stats_xrf55_v3.py (XRF55).
+    Rounded to 4 decimals, the same precision as the hardcoded v2 values, so that
+    fold 5 reproduces the v2 normalization exactly.
+    """
+    if stats_key == "xrf55":
+        f = V3_NORM_DIR / "norm_stats_xrf55_v3.json"
+    else:
+        if room not in V2_ROOMS:
+            raise ValueError(f"room must be one of {V2_ROOMS}, got {room}")
+        f = V3_NORM_DIR / f"norm_stats_v3_{room}.json"
+    if not f.exists():
+        raise FileNotFoundError(f"{f} not found: run the v3 norm-stats script first")
+    stats = json.loads(f.read_text(encoding="utf-8"))["stats"][f"fold{fold}"][stats_key]
+    return {"mean": round(stats["mean"], 4), "std": round(stats["std"], 4)}
+
 # One "domain" = (device, antennas to keep, normalization statistics key)
 #   antennas=None keeps every antenna of the device; device "xrf55" = XRF55 dataset.
 V2_EXPERIMENTS = {
@@ -1258,13 +1312,14 @@ class XRF55V2Dataset(Dataset):
     device = "xrf55"
     antennas = None
 
-    def __init__(self, root_dir, split, mean, std, shape_option="2d", target_time=None):
+    def __init__(self, root_dir, split, mean, std, shape_option="2d", target_time=None, fold=None):
         if split not in V2_SPLITS:
             raise ValueError(f"split must be one of {V2_SPLITS}")
         self.root_dir = Path(root_dir)
         if not self.root_dir.exists():
             raise FileNotFoundError(f"XRF55 folder not found: {self.root_dir}")
         self.split = split
+        self.fold = fold                    # None = v2 split, 1..5 = v3 fold
         self.mean = float(mean)
         self.std = float(std)
         self.shape_option = shape_option
@@ -1275,7 +1330,9 @@ class XRF55V2Dataset(Dataset):
             if len(parts) != 3:
                 continue
             user, act, rep = map(int, parts)
-            if act not in DEFAULT_LABEL_MAP or xrf55_split_of(rep) != split:
+            split_of = (xrf55_split_of(rep) if fold is None
+                        else v3_split_of_group(xrf55_repeat_group(rep), fold))
+            if act not in DEFAULT_LABEL_MAP or split_of != split:
                 continue
             self.samples.append({"label": DEFAULT_LABEL_MAP[act], "subject": user, "path": f})
 
@@ -1316,7 +1373,7 @@ class SSHARV2Dataset(Dataset):
     pattern = re.compile(r"act(\d+)_pos(\d+)_dir(\d+)_rep(\d+)")
 
     def __init__(self, root_dir, device, split, mean, std, antennas=None,
-                 shape_option="2d", target_time=None, room=V2_DEFAULT_ROOM):
+                 shape_option="2d", target_time=None, room=V2_DEFAULT_ROOM, fold=None):
         if split not in V2_SPLITS:
             raise ValueError(f"split must be one of {V2_SPLITS}")
         if room not in V2_ROOMS:
@@ -1331,8 +1388,14 @@ class SSHARV2Dataset(Dataset):
         self.antennas = None if antennas is None else list(antennas)
         self.shape_option = shape_option
         self.target_time = target_time
+        self.fold = fold                    # None = v2 split, 1..5 = v3 fold
         self.samples = []
         self._build_index()
+
+    def _split_of(self, direction, rep):
+        if self.fold is None:
+            return v2_split_of(direction, rep)
+        return v3_split_of_group(v3_repeat_group(direction, rep), self.fold)
 
     def _build_index(self):
         base = self.room_path / self.device / V2_RX[0]
@@ -1344,7 +1407,7 @@ class SSHARV2Dataset(Dataset):
                 if m is None:
                     continue
                 act, _, direction, rep = map(int, m.groups())
-                if act not in DEFAULT_LABEL_MAP or v2_split_of(direction, rep) != self.split:
+                if act not in DEFAULT_LABEL_MAP or self._split_of(direction, rep) != self.split:
                     continue
                 self.samples.append({
                     "label": DEFAULT_LABEL_MAP[act],
@@ -1376,27 +1439,35 @@ class SSHARV2Dataset(Dataset):
 
 def load_experiment_v2(exp, root_dir, batch_size=64, shape_option="2d", target_time=None,
                        num_workers=DEFAULT_NUM_WORKERS, pin_memory=DEFAULT_PIN_MEMORY,
-                       room=V2_DEFAULT_ROOM):
+                       room=V2_DEFAULT_ROOM, fold=None):
     """
     Build train / val / test loaders for one v2 experiment in one room.
 
     Train and val come from the training domain, test from the test domain;
     each domain is normalized with its own hardcoded statistics of that room
     (V2_NORM_STATS). The room is ignored for exp "xrf55".
+
+    fold=None: v2 split. fold=1..5: v3 5-fold split over repetitions, with the
+    normalization statistics of that fold (v3_norm_stats); only V3_EXPERIMENTS.
     """
     if exp not in V2_EXPERIMENTS:
         raise ValueError(f"Unknown exp {exp}, expected {list(V2_EXPERIMENTS)}")
+    if fold is not None and exp not in V3_EXPERIMENTS:
+        raise ValueError(f"v3 (fold={fold}) supports only {V3_EXPERIMENTS}, got {exp}")
     cfg = V2_EXPERIMENTS[exp]
 
     def make(domain, split):
         device, antennas, stats_key = domain
-        stats = v2_norm_stats(room, stats_key)
+        if fold is None:
+            stats = v2_norm_stats(room, stats_key)
+        else:
+            stats = v3_norm_stats(room, stats_key, fold)
         if device == "xrf55":
             return XRF55V2Dataset(root_dir, split, stats["mean"], stats["std"],
-                                  shape_option=shape_option, target_time=target_time)
+                                  shape_option=shape_option, target_time=target_time, fold=fold)
         return SSHARV2Dataset(root_dir, device, split, stats["mean"], stats["std"],
                               antennas=antennas, shape_option=shape_option, target_time=target_time,
-                              room=room)
+                              room=room, fold=fold)
 
     datasets = {
         "train": make(cfg["train"], "train"),
@@ -1417,6 +1488,7 @@ def load_experiment_v2(exp, root_dir, batch_size=64, shape_option="2d", target_t
     info = {
         "exp": exp,
         "room": None if exp == "xrf55" else room,
+        "fold": fold,
         "train_domain": cfg["train"],
         "test_domain": cfg["test"],
         "input_shape": tuple(x0.shape),

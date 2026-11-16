@@ -1,0 +1,68 @@
+{
+  "room": "room_02",
+  "dataset_root": "D:\\workspace\\HUST\\Personal\\WiFi-Sensing\\Code\\CodeForPaper\\benchmark\\data\\sshar_amp_interp\\room_02",
+  "split": "v3 5-fold over repetitions; groups dir00 {1,2}..{9,10}, directional {1}..{5}; fold k: test=group k, val=group k-1 (cyclic), train=other 3 groups (labels 1-8)",
+  "note": "global z-score stats on raw samples (1000 time steps), 56 subcarriers; fold5 == v2 split",
+  "stats": {
+    "fold1": {
+      "esp": {
+        "mean": 27.37196316666142,
+        "std": 7.318606321294705,
+        "n_samples": 3840
+      },
+      "asus": {
+        "mean": 2620.5431598897912,
+        "std": 640.3945887924308,
+        "n_samples": 3840
+      }
+    },
+    "fold2": {
+      "esp": {
+        "mean": 27.373308206822145,
+        "std": 7.3145804232509395,
+        "n_samples": 3840
+      },
+      "asus": {
+        "mean": 2620.627550585192,
+        "std": 640.4787370037575,
+        "n_samples": 3840
+      }
+    },
+    "fold3": {
+      "esp": {
+        "mean": 27.372163527863368,
+        "std": 7.319706659959866,
+        "n_samples": 3840
+      },
+      "asus": {
+        "mean": 2620.7643844938434,
+        "std": 640.3974447615034,
+        "n_samples": 3840
+      }
+    },
+    "fold4": {
+      "esp": {
+        "mean": 27.370831006885673,
+        "std": 7.323125665381265,
+        "n_samples": 3840
+      },
+      "asus": {
+        "mean": 2620.743785045888,
+        "std": 640.5482015464255,
+        "n_samples": 3840
+      }
+    },
+    "fold5": {
+      "esp": {
+        "mean": 27.371272625442117,
+        "std": 7.318946747002792,
+        "n_samples": 3840
+      },
+      "asus": {
+        "mean": 2620.571465196367,
+        "std": 640.4433183295826,
+        "n_samples": 3840
+      }
+    }
+  }
+}

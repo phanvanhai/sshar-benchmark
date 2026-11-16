@@ -13,7 +13,8 @@ import numpy as np
 
 import torch
 
-from datasets import load_dataset, load_experiment_v2, V2_EXPERIMENTS, V2_ROOMS, V2_DEFAULT_ROOM
+from datasets import (load_dataset, load_experiment_v2, V2_EXPERIMENTS, V2_ROOMS, V2_DEFAULT_ROOM,
+                      V3_FOLDS, V3_EXPERIMENTS)
 from models import get_model
 from train import train, train_v2
 from metrics import (
@@ -77,6 +78,15 @@ def parse_args():
         default=V2_DEFAULT_ROOM,
         choices=list(V2_ROOMS),
         help="V2 only: room to use (--data_root = folder containing it). Ignored for --exp xrf55.",
+    )
+
+    parser.add_argument(
+        "--fold",
+        type=int,
+        default=None,
+        choices=list(V3_FOLDS),
+        help="V3 (doc/experiment_plan_v3.md): 5-fold split over repetitions, fold 1..5 "
+             f"(only --exp {'/'.join(V3_EXPERIMENTS)}). Omit for the v2 split. Fold 5 = v2 split.",
     )
 
     parser.add_argument(
@@ -280,7 +290,11 @@ def parse_args():
             parser.error("--exp takes exactly one --data_root "
                          "(the folder containing --room, or the XRF55 .npy folder for --exp xrf55)")
         args.data_root = args.data_root[0]
+        if args.fold is not None and args.exp not in V3_EXPERIMENTS:
+            parser.error(f"--fold supports only --exp {', '.join(V3_EXPERIMENTS)}")
         return args
+    if args.fold is not None:
+        parser.error("--fold requires --exp")
     if args.dataset is None:
         parser.error("either --exp (v2) or --dataset is required")
 
@@ -362,6 +376,7 @@ def run_v2(args):
     room = None if args.exp == "xrf55" else args.room
     print("Experiment :", args.exp)
     print("Room       :", room if room else "- (XRF55)")
+    print("Split      :", "v2 (6/2/2)" if args.fold is None else f"v3 fold {args.fold}/5 (6/2/2)")
     print("Model      :", args.model)
     print("Data root  :", args.data_root)
     print("Device     :", device)
@@ -375,7 +390,7 @@ def run_v2(args):
 
     train_loader, val_loader, test_loader, info = load_experiment_v2(
         args.exp, args.data_root, batch_size=args.batch_size,
-        shape_option=shape_option, target_time=target_time, room=args.room,
+        shape_option=shape_option, target_time=target_time, room=args.room, fold=args.fold,
     )
     input_shape, num_classes = info["input_shape"], info["num_classes"]
     print("Input Shape :", input_shape)
@@ -393,6 +408,8 @@ def run_v2(args):
     ).to(device)
 
     run_name = f"{args.exp}_{args.model}" if room is None else f"{room}_{args.exp}_{args.model}"
+    if args.fold is not None:
+        run_name += f"_fold{args.fold}"
     save_dir = os.path.join(args.result_root, run_name)
     os.makedirs(save_dir, exist_ok=True)
     print("Save dir    :", save_dir)
@@ -420,6 +437,7 @@ def run_v2(args):
     extra = {
         "experiment": args.exp,
         "room": room,
+        "fold": args.fold,
         "train_domain": {"device": info["train_domain"][0], "antennas": info["train_domain"][1],
                          "norm_stats": info["train_domain"][2]},
         "test_domain": {"device": info["test_domain"][0], "antennas": info["test_domain"][1],

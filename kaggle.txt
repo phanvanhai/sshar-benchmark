@@ -1,12 +1,21 @@
-# Notebook Kaggle cho v2 (copy từ doc/experiment_plan_v2.md, Phụ lục B)
+# Notebook Kaggle cho v3: 5-fold theo lần lặp (doc/experiment_plan_v3.md)
+# Bản cho v2 nằm ở nhánh v2.
+#
+# Mỗi phiên chỉ cần sửa 2 dòng ở Cell 3: FOLD và SESSION.
+#   S1: R1-ESP + R2-ESP (2 mô hình)              ~5,9 h
+#   S2: R1-ASUS (2 mô hình) + XRF55 BiMamba      ~5,6 h
+#   S3: R2-ASUS (2 mô hình) + XRF55 CNN-GRU      ~6,1 h
+# Fold 5 = kết quả v2 (không chạy lại).
+# Phân công 3 tài khoản: TK1 fold 1 (S1-S3) + fold 4 S1; TK2 fold 2 + fold 4 S2; TK3 fold 3 + fold 4 S3.
 
 # ===== Cell 1: lấy code =====
-import os, subprocess
+import os, subprocess, time
+SESSION_START = time.time()
 os.environ["PYDEVD_DISABLE_FILE_VALIDATION"] = "1"
 os.chdir("/kaggle/working")
 
 REPO_URL, REPO = "https://github.com/phanvanhai/sshar-benchmark.git", "sshar-benchmark"
-BRANCH = "v2"                 # nhánh code v2 (master = v1)
+BRANCH = "v3"
 if not os.path.exists(REPO):
     subprocess.run(f"git clone -b {BRANCH} {REPO_URL} {REPO}", shell=True, check=True)
 else:
@@ -14,57 +23,68 @@ else:
                    shell=True, check=True, cwd=REPO)
 os.chdir(REPO)
 print(subprocess.run("git branch --show-current && git log --oneline -1",
-                     shell=True, capture_output=True, text=True).stdout)   # phải thấy: v2
+                     shell=True, capture_output=True, text=True).stdout)   # phải thấy: v3
 
 # ===== Cell 2: cài thư viện =====
 !pip install -q -r requirements.txt
-!pip install -q --no-build-isolation mamba-ssm   # chỉ cần cho bimamba (biên dịch ~50 phút); MODELS chỉ có cnn_gru -> comment dòng này
+# mamba-ssm cho bimamba: cài từ wheel đã build sẵn (Add Input: dataset phanvanhai/mamba-ssm-wheel);
+# không thấy wheel thì mới biên dịch (~50 phút)
+MAMBA_WHL = "/kaggle/input/datasets/phanvanhai/mamba-ssm-wheel/mamba_wheel/mamba_ssm-2.3.2.post1-cp313-cp313-linux_x86_64.whl"
+if os.path.exists(MAMBA_WHL):
+    !pip install -q --no-deps {MAMBA_WHL}
+else:
+    print("KHÔNG thấy wheel -> biên dịch mamba-ssm (~50 phút)")
+    !pip install -q --no-build-isolation mamba-ssm
+!python -c "from mamba_ssm.modules.mamba_simple import Mamba; import mamba_ssm; print('mamba_ssm', mamba_ssm.__version__, 'OK')"
 
 # ===== Cell 3: cấu hình =====
-ROOM_ROOTS = {                # thư mục CHỨA room_0X (thí nghiệm 1, 2, 3, 5)
-    "room_01": "/kaggle/input/datasets/phanvanhai/cmr-har-room1",  # <-- sửa: thư mục chứa room_01
-    "room_02": "/kaggle/input/datasets/phanvanhai/cmr-har-room2",  # <-- sửa: thư mục chứa room_02
+FOLD    = 1                   # <-- sửa: 1..4
+SESSION = "S1"                # <-- sửa: S1 / S2 / S3
+
+ROOM_ROOTS = {                # thư mục CHỨA room_0X
+    "room_01": "/kaggle/input/datasets/phanvanhai/cmr-har-room1",
+    "room_02": "/kaggle/input/datasets/phanvanhai/cmr-har-room2",
 }
-XRF55_ROOT  = "/kaggle/input/datasets/phanvanhai/xrf55-8act/XRF55_8act_dataset" # <-- sửa: thư mục chứa file .npy XRF55 (thí nghiệm 4)
+XRF55_ROOT  = "/kaggle/input/datasets/phanvanhai/xrf55-8act/XRF55_8act_dataset"
 RESULT_ROOT = "/kaggle/working/results"
+MAX_HOURS   = 9.0             # không bắt đầu lần chạy mới nếu phiên đã chạy quá MAX_HOURS giờ
 
-ROOMS = [                     # phòng cần chạy (XRF55 không phụ thuộc phòng)
-    # "room_01",
-    "room_02",
-]
+SESSIONS = {                  # (phòng, thí nghiệm, mô hình); XRF55: phòng = None
+    "S1": [("room_01", "esp_esp", "cnn_gru"), ("room_01", "esp_esp", "bimamba"),
+           ("room_02", "esp_esp", "cnn_gru"), ("room_02", "esp_esp", "bimamba")],
+    "S2": [("room_01", "asus_asus", "cnn_gru"), ("room_01", "asus_asus", "bimamba"),
+           (None, "xrf55", "bimamba")],
+    "S3": [("room_02", "asus_asus", "cnn_gru"), ("room_02", "asus_asus", "bimamba"),
+           (None, "xrf55", "cnn_gru")],
+}
+assert FOLD in (1, 2, 3, 4, 5) and SESSION in SESSIONS
+RUNS = SESSIONS[SESSION]
 
-MODELS = [
-    "cnn_gru",
-    "bimamba",
-]
+def run_name(room, exp, model):
+    base = f"{exp}_{model}" if room is None else f"{room}_{exp}_{model}"
+    return f"{base}_fold{FOLD}"
 
-EXPERIMENTS = [               # bỏ comment thí nghiệm cần chạy
-    "esp_esp",                # 1: ESP32 -> ESP32
-    # "asus_asus",            # 2: ASUS (4 ăng-ten) -> ASUS
-    # "asus0_esp",            # 3: ASUS (ăng-ten 0) -> ESP32
-    # "xrf55",                # 4: XRF55 -> XRF55 (chạy 1 lần, bỏ qua ROOMS)
-    # "esp_asus0",            # 5: ESP32 -> ASUS (ăng-ten 0)
-]
-
-RUNS = []                     # (phòng, thí nghiệm, data_root)
-for exp in EXPERIMENTS:
-    if exp == "xrf55":
-        RUNS.append((None, exp, XRF55_ROOT))
-    else:
-        RUNS += [(room, exp, ROOM_ROOTS[room]) for room in ROOMS]
-
-for room, exp, root in RUNS:  # kiểm tra đường dẫn: phải thấy room_0X, hoặc file .npy với XRF55
+for room, exp, model in RUNS:  # kiểm tra đường dẫn: phải thấy room_0X, hoặc file .npy với XRF55
+    root = XRF55_ROOT if room is None else ROOM_ROOTS[room]
     items = sorted(os.listdir(root))
-    print(room, exp, "->", root, ":", items[:3], "...", len(items), "mục")
+    print(run_name(room, exp, model), "->", root, ":", items[:3], "...", len(items), "mục")
 
-# ===== Cell 4: chạy =====
-for room, exp, root in RUNS:
+# ===== Cell 4: chạy (nén kết quả sau mỗi lần chạy) =====
+ZIP = f"/kaggle/working/results_v3_fold{FOLD}_{SESSION}.zip"
+for room, exp, model in RUNS:
+    name = run_name(room, exp, model)
+    hours = (time.time() - SESSION_START) / 3600
+    if os.path.exists(f"{RESULT_ROOT}/{name}/best_val/metrics.json"):
+        print(f"\n[bỏ qua] {name}: đã có kết quả")
+        continue
+    if hours > MAX_HOURS:
+        print(f"\n[dừng] phiên đã chạy {hours:.1f} h > {MAX_HOURS} h, chưa chạy: {name}")
+        break
+    root = XRF55_ROOT if room is None else ROOM_ROOTS[room]
     room_arg = "" if room is None else f"--room {room}"
-    for model in MODELS:
-        print(f"\n{'#' * 20} room={room} / exp={exp} / model={model} {'#' * 20}")
-        !python main.py --exp {exp} {room_arg} --model {model} --data_root {root} --result_root {RESULT_ROOT}
+    print(f"\n{'#' * 20} {name}  (phiên đã chạy {hours:.1f} h) {'#' * 20}")
+    !python main.py --exp {exp} {room_arg} --fold {FOLD} --model {model} --data_root {root} --result_root {RESULT_ROOT}
+    !cd /kaggle/working && rm -f {ZIP} && zip -qr {ZIP} results
+    print("Saved:", ZIP)
 
-# ===== Cell 5: nén kết quả để tải về =====
-ZIP = "/kaggle/working/results_v2_" + "_".join(ROOMS + EXPERIMENTS) + ".zip"
-!zip -qr {ZIP} {RESULT_ROOT}
-print("Saved:", ZIP)
+print(f"\nXong phiên fold{FOLD} {SESSION} sau {(time.time() - SESSION_START) / 3600:.1f} h")
