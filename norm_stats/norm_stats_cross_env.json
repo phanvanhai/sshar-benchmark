@@ -1,0 +1,93 @@
+{
+  "src_room_root": "D:\\workspace\\HUST\\Personal\\WiFi-Sensing\\Code\\CodeForPaper\\benchmark\\data\\sshar_amp_interp\\room_01",
+  "src_xrf55_root": "D:\\workspace\\HUST\\Personal\\WiFi-Sensing\\Code\\CodeForPaper\\benchmark\\data\\XRF55_8act_dataset",
+  "split": "cross-env source room 1: fold k: val = repetition group k, train = other 4 groups (labels 1-8); groups as v3",
+  "note": "global z-score stats on raw samples (1000 time steps), applied to train, val and the whole target room",
+  "stats": {
+    "fold1": {
+      "esp": {
+        "mean": 27.54720197050759,
+        "std": 6.837580913335417,
+        "n_samples": 5120
+      },
+      "asus": {
+        "mean": 2597.197533636703,
+        "std": 816.6161701053501,
+        "n_samples": 5120
+      },
+      "xrf55": {
+        "mean": 9.260773822009964,
+        "std": 4.889373872013578,
+        "n_samples": 3840
+      }
+    },
+    "fold2": {
+      "esp": {
+        "mean": 27.54673127101195,
+        "std": 6.840188983500169,
+        "n_samples": 5120
+      },
+      "asus": {
+        "mean": 2597.1053882756296,
+        "std": 816.3946611559015,
+        "n_samples": 5120
+      },
+      "xrf55": {
+        "mean": 9.261622265015882,
+        "std": 4.888051481354626,
+        "n_samples": 3840
+      }
+    },
+    "fold3": {
+      "esp": {
+        "mean": 27.54590887294279,
+        "std": 6.8435234210440505,
+        "n_samples": 5120
+      },
+      "asus": {
+        "mean": 2597.024610788001,
+        "std": 816.5169366559644,
+        "n_samples": 5120
+      },
+      "xrf55": {
+        "mean": 9.262952141696996,
+        "std": 4.890576217077319,
+        "n_samples": 3840
+      }
+    },
+    "fold4": {
+      "esp": {
+        "mean": 27.546327092765157,
+        "std": 6.842476369872181,
+        "n_samples": 5120
+      },
+      "asus": {
+        "mean": 2597.4386588743987,
+        "std": 816.769375093321,
+        "n_samples": 5120
+      },
+      "xrf55": {
+        "mean": 9.260810161501505,
+        "std": 4.891059002823405,
+        "n_samples": 3840
+      }
+    },
+    "fold5": {
+      "esp": {
+        "mean": 27.54585228001888,
+        "std": 6.8438579317517325,
+        "n_samples": 5120
+      },
+      "asus": {
+        "mean": 2597.0712348658094,
+        "std": 816.5919239985801,
+        "n_samples": 5120
+      },
+      "xrf55": {
+        "mean": 9.258676599061276,
+        "std": 4.8887358073598515,
+        "n_samples": 3840
+      }
+    }
+  }
+}

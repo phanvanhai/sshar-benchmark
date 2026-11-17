@@ -1312,14 +1312,16 @@ class XRF55V2Dataset(Dataset):
     device = "xrf55"
     antennas = None
 
-    def __init__(self, root_dir, split, mean, std, shape_option="2d", target_time=None, fold=None):
+    def __init__(self, root_dir, split, mean, std, shape_option="2d", target_time=None, fold=None,
+                 cross_env=None):
         if split not in V2_SPLITS:
             raise ValueError(f"split must be one of {V2_SPLITS}")
         self.root_dir = Path(root_dir)
         if not self.root_dir.exists():
             raise FileNotFoundError(f"XRF55 folder not found: {self.root_dir}")
         self.split = split
-        self.fold = fold                    # None = v2 split, 1..5 = v3 fold
+        self.fold = fold                    # None = v2 split, 1..5 = v3 fold (or cross-env fold)
+        self.cross_env = cross_env          # None / "source" / "target" (see cross_env_split_of)
         self.mean = float(mean)
         self.std = float(std)
         self.shape_option = shape_option
@@ -1330,8 +1332,12 @@ class XRF55V2Dataset(Dataset):
             if len(parts) != 3:
                 continue
             user, act, rep = map(int, parts)
-            split_of = (xrf55_split_of(rep) if fold is None
-                        else v3_split_of_group(xrf55_repeat_group(rep), fold))
+            if cross_env is not None:
+                split_of = cross_env_split_of(xrf55_repeat_group(rep), fold, cross_env)
+            elif fold is None:
+                split_of = xrf55_split_of(rep)
+            else:
+                split_of = v3_split_of_group(xrf55_repeat_group(rep), fold)
             if act not in DEFAULT_LABEL_MAP or split_of != split:
                 continue
             self.samples.append({"label": DEFAULT_LABEL_MAP[act], "subject": user, "path": f})
@@ -1373,7 +1379,8 @@ class SSHARV2Dataset(Dataset):
     pattern = re.compile(r"act(\d+)_pos(\d+)_dir(\d+)_rep(\d+)")
 
     def __init__(self, root_dir, device, split, mean, std, antennas=None,
-                 shape_option="2d", target_time=None, room=V2_DEFAULT_ROOM, fold=None):
+                 shape_option="2d", target_time=None, room=V2_DEFAULT_ROOM, fold=None,
+                 cross_env=None):
         if split not in V2_SPLITS:
             raise ValueError(f"split must be one of {V2_SPLITS}")
         if room not in V2_ROOMS:
@@ -1388,11 +1395,14 @@ class SSHARV2Dataset(Dataset):
         self.antennas = None if antennas is None else list(antennas)
         self.shape_option = shape_option
         self.target_time = target_time
-        self.fold = fold                    # None = v2 split, 1..5 = v3 fold
+        self.fold = fold                    # None = v2 split, 1..5 = v3 fold (or cross-env fold)
+        self.cross_env = cross_env          # None / "source" / "target" (see cross_env_split_of)
         self.samples = []
         self._build_index()
 
     def _split_of(self, direction, rep):
+        if self.cross_env is not None:
+            return cross_env_split_of(v3_repeat_group(direction, rep), self.fold, self.cross_env)
         if self.fold is None:
             return v2_split_of(direction, rep)
         return v3_split_of_group(v3_repeat_group(direction, rep), self.fold)
@@ -1502,4 +1512,111 @@ def load_experiment_v2(exp, root_dir, batch_size=64, shape_option="2d", target_t
         n_lab = len({s["label"] for s in ds.samples})
         print(f"  {split:5s}: device={ds.device:4s} antennas={ds.antennas} "
               f"mean={ds.mean} std={ds.std} samples={len(ds)} labels={n_lab}")
+    return loaders["train"], loaders["val"], loaders["test"], info
+
+
+# ------------------------------------------------------------
+# Cross-environment (doc/experiment_plan_cross_env.md): room 1 -> room 2
+# ------------------------------------------------------------
+# Source room: 5 folds over the repetition groups of v3 (v3_repeat_group / xrf55_repeat_group);
+#   fold k: val = group k, train = the other 4 groups (8/2).
+# Target room: every sample is test.
+# Normalization: mean/std of the source TRAIN split of the fold, applied to train, val and test.
+CROSS_ENV_SRC_ROOM = "room_01"
+CROSS_ENV_TGT_ROOM = "room_02"
+CROSS_ENV_EXPERIMENTS = {            # exp -> (device, class names)
+    "cross_env_esp":   ("esp", V2_LABEL_NAMES),
+    "cross_env_asus":  ("asus", V2_LABEL_NAMES),
+    "cross_env_xrf55": ("xrf55", V2_LABEL_NAMES_XRF55),
+}
+CROSS_ENV_NORM_FILE = V3_NORM_DIR / "norm_stats_cross_env.json"
+
+
+def cross_env_split_of(group, fold, role):
+    """role "source": val = group `fold`, train = other groups; role "target": everything is test."""
+    if role == "target":
+        return "test"
+    if role != "source":
+        raise ValueError(f"cross_env role must be 'source' or 'target', got {role}")
+    if fold not in V3_FOLDS:
+        raise ValueError(f"fold must be one of {V3_FOLDS}, got {fold}")
+    return "val" if group == fold else "train"
+
+
+def cross_env_norm_stats(device, fold):
+    """mean/std of the source train split (written by norm_stats/compute_norm_stats_cross_env.py)."""
+    if not CROSS_ENV_NORM_FILE.exists():
+        raise FileNotFoundError(f"{CROSS_ENV_NORM_FILE} not found: run "
+                                f"norm_stats/compute_norm_stats_cross_env.py first")
+    stats = json.loads(CROSS_ENV_NORM_FILE.read_text(encoding="utf-8"))["stats"][f"fold{fold}"][device]
+    return {"mean": round(stats["mean"], 4), "std": round(stats["std"], 4)}
+
+
+def load_experiment_cross_env(exp, src_root, tgt_root, fold, batch_size=64, shape_option="2d",
+                              target_time=None, num_workers=DEFAULT_NUM_WORKERS,
+                              pin_memory=DEFAULT_PIN_MEMORY):
+    """
+    Train / val loaders from the source room (fold `fold`), test loader = whole target room.
+
+    src_root / tgt_root: folders containing room_01 / room_02 (own rooms), or the XRF55
+    room1 / room2 .npy folders (exp cross_env_xrf55).
+    info["test_subjects"]: subject of every test sample, in loader order (shuffle=False).
+    info["src_subjects"]: subjects present in the source room.
+    """
+    if exp not in CROSS_ENV_EXPERIMENTS:
+        raise ValueError(f"Unknown exp {exp}, expected {list(CROSS_ENV_EXPERIMENTS)}")
+    device, class_names = CROSS_ENV_EXPERIMENTS[exp]
+    stats = cross_env_norm_stats(device, fold)
+
+    def make(root, split, role, room):
+        if device == "xrf55":
+            return XRF55V2Dataset(root, split, stats["mean"], stats["std"], shape_option=shape_option,
+                                  target_time=target_time, fold=fold, cross_env=role)
+        return SSHARV2Dataset(root, device, split, stats["mean"], stats["std"], shape_option=shape_option,
+                              target_time=target_time, room=room, fold=fold, cross_env=role)
+
+    datasets = {
+        "train": make(src_root, "train", "source", CROSS_ENV_SRC_ROOM),
+        "val": make(src_root, "val", "source", CROSS_ENV_SRC_ROOM),
+        "test": make(tgt_root, "test", "target", CROSS_ENV_TGT_ROOM),
+    }
+    for split, ds in datasets.items():
+        if len(ds) == 0:
+            raise ValueError(f"{split} split is empty: check --data_root / --tgt_root")
+    loaders = {
+        split: DataLoader(ds, batch_size=batch_size, shuffle=(split == "train"),
+                          num_workers=num_workers, pin_memory=pin_memory)
+        for split, ds in datasets.items()
+    }
+
+    x0, _ = datasets["train"][0]
+    xt, _ = datasets["test"][0]
+    if tuple(x0.shape) != tuple(xt.shape):
+        raise ValueError(f"train/test input shapes differ: {tuple(x0.shape)} vs {tuple(xt.shape)}")
+
+    def subj(s):
+        return str(s["subject"]) if device != "xrf55" else f"{int(s['subject']):02d}"
+
+    info = {
+        "exp": exp,
+        "device": device,
+        "fold": fold,
+        "src_room": CROSS_ENV_SRC_ROOM,
+        "tgt_room": CROSS_ENV_TGT_ROOM,
+        "norm_stats": stats,
+        "input_shape": tuple(x0.shape),
+        "num_classes": len(class_names),
+        "class_names": list(class_names),
+        "train_size": len(datasets["train"]),
+        "val_size": len(datasets["val"]),
+        "test_size": len(datasets["test"]),
+        "src_subjects": sorted({subj(s) for s in datasets["train"].samples}
+                               | {subj(s) for s in datasets["val"].samples}),
+        "test_subjects": [subj(s) for s in datasets["test"].samples],
+    }
+    for split, ds in datasets.items():
+        n_lab = len({s["label"] for s in ds.samples})
+        n_sub = len({subj(s) for s in ds.samples})
+        print(f"  {split:5s}: device={ds.device:5s} mean={ds.mean} std={ds.std} "
+              f"samples={len(ds)} labels={n_lab} subjects={n_sub}")
     return loaders["train"], loaders["val"], loaders["test"], info

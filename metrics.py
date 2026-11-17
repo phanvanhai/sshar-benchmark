@@ -273,6 +273,7 @@ def save_predictions(
     save_dir,
     y_true,
     y_pred,
+    subjects=None,
 ):
 
     df = pd.DataFrame({
@@ -285,6 +286,10 @@ def save_predictions(
         "pred":
             y_pred,
     })
+    if subjects is not None:
+        if len(subjects) != len(y_true):
+            raise ValueError(f"subjects ({len(subjects)}) and y_true ({len(y_true)}) differ in length")
+        df["subject"] = list(subjects)
 
     df.to_csv(
         os.path.join(
@@ -504,9 +509,12 @@ def evaluate_model(
     total_epochs=None,
     val_size=None,
     extra=None,
+    subjects=None,
 ):
     """
     Save all evaluation results.
+    subjects: optional subject id per test sample (same order as y_true), written as a
+              "subject" column of predictions.csv.
 
     Output
     ------
@@ -561,6 +569,7 @@ def evaluate_model(
         save_dir,
         y_true,
         y_pred,
+        subjects=subjects,
     )
 
     save_classification_report(

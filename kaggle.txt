@@ -1,12 +1,17 @@
-# Notebook Kaggle cho v3: 5-fold theo lần lặp (doc/experiment_plan_v3.md)
-# Bản cho v2 nằm ở nhánh v2.
+# Notebook Kaggle cho cross-environment room 1 -> room 2 (doc/experiment_plan_cross_env.md)
+# Nhánh cross_evn. Bản v3 nằm ở nhánh v3.
 #
-# Mỗi phiên chỉ cần sửa 2 dòng ở Cell 3: FOLD và SESSION.
-#   S1: R1-ESP + R2-ESP (2 mô hình)              ~5,9 h
-#   S2: R1-ASUS (2 mô hình) + XRF55 BiMamba      ~5,6 h
-#   S3: R2-ASUS (2 mô hình) + XRF55 CNN-GRU      ~6,1 h
-# Fold 5 = kết quả v2 (không chạy lại).
-# Phân công 3 tài khoản: TK1 fold 1 (S1-S3) + fold 4 S1; TK2 fold 2 + fold 4 S2; TK3 fold 3 + fold 4 S3.
+# Train/val: room 1 (fold k: val = nhóm lần lặp k, train = 4 nhóm còn lại); test: TOÀN BỘ room 2.
+# Mỗi phiên chỉ cần sửa 2 dòng ở Cell 3: ACCOUNT (TK1..TK5) và PART (phiên thứ mấy của tài khoản đó);
+# fold và nhóm lần chạy được lấy tự động từ bảng PLAN.
+#   S1: ASUS CNN-GRU + ESP CNN-GRU      ~6,1 h / fold
+#   S2: ASUS BiMamba + ESP BiMamba      ~4,5 h / fold
+#   SX: XRF55 CNN-GRU + XRF55 BiMamba   ~2,4 h / fold
+# Tổng ~65 h GPU (ước tính). Phân công 5 tài khoản:
+#   TK1..TK4 (TKk): PART 1 = fold k S1, PART 2 = fold k S2                  (~10,6 h mỗi tài khoản)
+#   TK5           : PART 1 = fold 5 S1, PART 2 = fold 5 S2,
+#                   PART 3 = SX fold 1,2,3, PART 4 = SX fold 4,5             (~22,6 h)
+# Chạy S1 trước ở mọi tài khoản và xem thời gian thực tế trước khi chạy S2.
 
 # ===== Cell 1: lấy code =====
 import os, subprocess, time
@@ -15,7 +20,7 @@ os.environ["PYDEVD_DISABLE_FILE_VALIDATION"] = "1"
 os.chdir("/kaggle/working")
 
 REPO_URL, REPO = "https://github.com/phanvanhai/sshar-benchmark.git", "sshar-benchmark"
-BRANCH = "v3"
+BRANCH = "cross_evn"
 if not os.path.exists(REPO):
     subprocess.run(f"git clone -b {BRANCH} {REPO_URL} {REPO}", shell=True, check=True)
 else:
@@ -23,7 +28,7 @@ else:
                    shell=True, check=True, cwd=REPO)
 os.chdir(REPO)
 print(subprocess.run("git branch --show-current && git log --oneline -1",
-                     shell=True, capture_output=True, text=True).stdout)   # phải thấy: v3
+                     shell=True, capture_output=True, text=True).stdout)   # phải thấy: cross_evn
 
 # ===== Cell 2: cài thư viện =====
 !pip install -q -r requirements.txt
@@ -38,41 +43,51 @@ else:
 !python -c "from mamba_ssm.modules.mamba_simple import Mamba; import mamba_ssm; print('mamba_ssm', mamba_ssm.__version__, 'OK')"
 
 # ===== Cell 3: cấu hình =====
-FOLD    = 1                   # <-- sửa: 1..4
-SESSION = "S1"                # <-- sửa: S1 / S2 / S3
+ACCOUNT = "TK1"               # <-- sửa: TK1 / TK2 / TK3 / TK4 / TK5
+PART    = 1                   # <-- sửa: phiên thứ mấy của tài khoản (TK1-TK4: 1..2, TK5: 1..4)
 
-ROOM_ROOTS = {                # thư mục CHỨA room_0X
-    "room_01": "/kaggle/input/datasets/phanvanhai/cmr-har-room1",
-    "room_02": "/kaggle/input/datasets/phanvanhai/cmr-har-room2",
+PLAN = {                      # tài khoản -> các phiên theo thứ tự: (danh sách fold, nhóm lần chạy)
+    "TK1": [([1], "S1"), ([1], "S2")],
+    "TK2": [([2], "S1"), ([2], "S2")],
+    "TK3": [([3], "S1"), ([3], "S2")],
+    "TK4": [([4], "S1"), ([4], "S2")],
+    "TK5": [([5], "S1"), ([5], "S2"), ([1, 2, 3], "SX"), ([4, 5], "SX")],
 }
-XRF55_ROOT  = "/kaggle/input/datasets/phanvanhai/xrf55-8act/XRF55_8act_dataset"
+assert ACCOUNT in PLAN and 1 <= PART <= len(PLAN[ACCOUNT]), f"{ACCOUNT} có {len(PLAN.get(ACCOUNT, []))} phiên"
+FOLDS, SESSION = PLAN[ACCOUNT][PART - 1]
+print(f"{ACCOUNT} phiên {PART}/{len(PLAN[ACCOUNT])}: folds={FOLDS}, {SESSION}")
+
+SRC_ROOM_ROOT  = "/kaggle/input/datasets/phanvanhai/cmr-har-room1"   # thư mục CHỨA room_01 (nguồn)
+TGT_ROOM_ROOT  = "/kaggle/input/datasets/phanvanhai/cmr-har-room2"   # thư mục CHỨA room_02 (đích)
+SRC_XRF55_ROOT = "/kaggle/input/datasets/phanvanhai/xrf55-8act/XRF55_8act_dataset"  # file .npy XRF55 room1
+TGT_XRF55_ROOT = "/kaggle/input/datasets/phanvanhai/xrf55-room2"    # thư mục file .npy XRF55 room2
 RESULT_ROOT = "/kaggle/working/results"
-MAX_HOURS   = 9.0             # không bắt đầu lần chạy mới nếu phiên đã chạy quá MAX_HOURS giờ
+MAX_HOURS   = 7.5             # không bắt đầu lần chạy mới nếu phiên đã chạy quá MAX_HOURS giờ
 
-SESSIONS = {                  # (phòng, thí nghiệm, mô hình); XRF55: phòng = None
-    "S1": [("room_01", "esp_esp", "cnn_gru"), ("room_01", "esp_esp", "bimamba"),
-           ("room_02", "esp_esp", "cnn_gru"), ("room_02", "esp_esp", "bimamba")],
-    "S2": [("room_01", "asus_asus", "cnn_gru"), ("room_01", "asus_asus", "bimamba"),
-           (None, "xrf55", "bimamba")],
-    "S3": [("room_02", "asus_asus", "cnn_gru"), ("room_02", "asus_asus", "bimamba"),
-           (None, "xrf55", "cnn_gru")],
+SESSIONS = {                  # (thí nghiệm, mô hình)
+    "S1": [("cross_env_asus", "cnn_gru"), ("cross_env_esp", "cnn_gru")],
+    "S2": [("cross_env_asus", "bimamba"), ("cross_env_esp", "bimamba")],
+    "SX": [("cross_env_xrf55", "cnn_gru"), ("cross_env_xrf55", "bimamba")],
 }
-assert FOLD in (1, 2, 3, 4, 5) and SESSION in SESSIONS
-RUNS = SESSIONS[SESSION]
+assert SESSION in SESSIONS and FOLDS and all(k in (1, 2, 3, 4, 5) for k in FOLDS)
+RUNS = [(fold, exp, model) for fold in FOLDS for exp, model in SESSIONS[SESSION]]
 
-def run_name(room, exp, model):
-    base = f"{exp}_{model}" if room is None else f"{room}_{exp}_{model}"
-    return f"{base}_fold{FOLD}"
+def roots(exp):
+    return (SRC_XRF55_ROOT, TGT_XRF55_ROOT) if exp == "cross_env_xrf55" else (SRC_ROOM_ROOT, TGT_ROOM_ROOT)
 
-for room, exp, model in RUNS:  # kiểm tra đường dẫn: phải thấy room_0X, hoặc file .npy với XRF55
-    root = XRF55_ROOT if room is None else ROOM_ROOTS[room]
-    items = sorted(os.listdir(root))
-    print(run_name(room, exp, model), "->", root, ":", items[:3], "...", len(items), "mục")
+def run_name(fold, exp, model):
+    return f"r1_to_r2_{exp.replace('cross_env_', '')}_{model}_fold{fold}"
+
+for exp in sorted({exp for _, exp, _ in RUNS}):   # kiểm tra đường dẫn: phải thấy room_0X, hoặc file .npy với XRF55
+    for root in roots(exp):
+        items = sorted(os.listdir(root))
+        print(exp, "->", root, ":", items[:3], "...", len(items), "mục")
+print("Sẽ chạy:", [run_name(*r) for r in RUNS])
 
 # ===== Cell 4: chạy (nén kết quả sau mỗi lần chạy) =====
-ZIP = f"/kaggle/working/results_v3_fold{FOLD}_{SESSION}.zip"
-for room, exp, model in RUNS:
-    name = run_name(room, exp, model)
+ZIP = f"/kaggle/working/results_cross_env_{ACCOUNT}_part{PART}_fold{''.join(map(str, FOLDS))}_{SESSION}.zip"
+for fold, exp, model in RUNS:
+    name = run_name(fold, exp, model)
     hours = (time.time() - SESSION_START) / 3600
     if os.path.exists(f"{RESULT_ROOT}/{name}/best_val/metrics.json"):
         print(f"\n[bỏ qua] {name}: đã có kết quả")
@@ -80,11 +95,12 @@ for room, exp, model in RUNS:
     if hours > MAX_HOURS:
         print(f"\n[dừng] phiên đã chạy {hours:.1f} h > {MAX_HOURS} h, chưa chạy: {name}")
         break
-    root = XRF55_ROOT if room is None else ROOM_ROOTS[room]
-    room_arg = "" if room is None else f"--room {room}"
+    src, tgt = roots(exp)
     print(f"\n{'#' * 20} {name}  (phiên đã chạy {hours:.1f} h) {'#' * 20}")
-    !python main.py --exp {exp} {room_arg} --fold {FOLD} --model {model} --data_root {root} --result_root {RESULT_ROOT}
+    t_run = time.time()
+    !python main.py --exp {exp} --fold {fold} --model {model} --data_root {src} --tgt_root {tgt} --result_root {RESULT_ROOT}
+    print(f"[thời gian] {name}: {(time.time() - t_run) / 3600:.2f} h")
     !cd /kaggle/working && rm -f {ZIP} && zip -qr {ZIP} results
     print("Saved:", ZIP)
 
-print(f"\nXong phiên fold{FOLD} {SESSION} sau {(time.time() - SESSION_START) / 3600:.1f} h")
+print(f"\nXong {ACCOUNT} phiên {PART}: folds={FOLDS} {SESSION} sau {(time.time() - SESSION_START) / 3600:.1f} h")

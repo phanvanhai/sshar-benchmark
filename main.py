@@ -14,7 +14,7 @@ import numpy as np
 import torch
 
 from datasets import (load_dataset, load_experiment_v2, V2_EXPERIMENTS, V2_ROOMS, V2_DEFAULT_ROOM,
-                      V3_FOLDS, V3_EXPERIMENTS)
+                      V3_FOLDS, V3_EXPERIMENTS, CROSS_ENV_EXPERIMENTS, load_experiment_cross_env)
 from models import get_model
 from train import train, train_v2
 from metrics import (
@@ -64,12 +64,22 @@ def parse_args():
         "--exp",
         type=str,
         default=None,
-        choices=list(V2_EXPERIMENTS),
+        choices=list(V2_EXPERIMENTS) + list(CROSS_ENV_EXPERIMENTS),
         help="V2 experiment (doc/experiment_plan_v2.md): esp_esp (1: ESP32 -> ESP32), "
              "asus_asus (2: ASUS 4 antennas -> ASUS), asus0_esp (3: ASUS antenna 0 -> ESP32), "
              "xrf55 (4: XRF55 -> XRF55; --data_root = folder of the XRF55 .npy files), "
              "esp_asus0 (5: ESP32 -> ASUS antenna 0). "
+             "Cross-environment room 1 -> room 2 (doc/experiment_plan_cross_env.md): "
+             "cross_env_esp, cross_env_asus, cross_env_xrf55 (need --fold and --tgt_root). "
              "When set, --dataset/--rooms/--split/--norm/--case_split are ignored.",
+    )
+
+    parser.add_argument(
+        "--tgt_root",
+        type=str,
+        default=None,
+        help="Cross-env only: target folder (containing room_02, or the XRF55 room2 .npy folder). "
+             "--data_root is then the source (containing room_01, or the XRF55 room1 .npy folder).",
     )
 
     parser.add_argument(
@@ -290,6 +300,12 @@ def parse_args():
             parser.error("--exp takes exactly one --data_root "
                          "(the folder containing --room, or the XRF55 .npy folder for --exp xrf55)")
         args.data_root = args.data_root[0]
+        if args.exp in CROSS_ENV_EXPERIMENTS:
+            if args.fold is None or args.tgt_root is None:
+                parser.error(f"--exp {args.exp} needs --fold and --tgt_root")
+            return args
+        if args.tgt_root is not None:
+            parser.error("--tgt_root is only for the cross_env_* experiments")
         if args.fold is not None and args.exp not in V3_EXPERIMENTS:
             parser.error(f"--fold supports only --exp {', '.join(V3_EXPERIMENTS)}")
         return args
@@ -473,8 +489,123 @@ def run_v2(args):
     print("\nFinished. Result folder:", save_dir)
 
 
+def run_cross_env(args):
+    """Cross-environment room 1 -> room 2: train/val on room 1 (fold), test on the whole room 2."""
+    set_seed(SEED)
+    if args.device == "cuda" and torch.cuda.is_available():
+        device = torch.device("cuda")
+    else:
+        device = torch.device("cpu")
+
+    print("=" * 60)
+    print("WiFi HAR Benchmark - cross-environment (room 1 -> room 2)")
+    print("=" * 60)
+    print("Experiment :", args.exp)
+    print("Split      :", f"source fold {args.fold}/5 (train 4 groups / val group {args.fold}), "
+                          "test = whole target room")
+    print("Model      :", args.model)
+    print("Source root:", args.data_root)
+    print("Target root:", args.tgt_root)
+    print("Device     :", device)
+    print(f"Protocol   : epochs={args.epochs} lr={args.lr} batch={args.batch_size} Adam, seed={SEED}")
+
+    if args.model == "cnn_gru":
+        shape_option, target_time = "3d", None
+    else:
+        shape_option = "2d"
+        target_time = 250 if args.model == "bimamba" else None
+
+    train_loader, val_loader, test_loader, info = load_experiment_cross_env(
+        args.exp, args.data_root, args.tgt_root, args.fold, batch_size=args.batch_size,
+        shape_option=shape_option, target_time=target_time,
+    )
+    input_shape, num_classes = info["input_shape"], info["num_classes"]
+    print("Input Shape :", input_shape)
+    print(f"Sizes       : train={info['train_size']} val={info['val_size']} test={info['test_size']}")
+    shared = sorted(set(info["src_subjects"]) & set(info["test_subjects"]))
+    print(f"Subjects    : source {len(info['src_subjects'])}, target {len(set(info['test_subjects']))}, "
+          f"shared {shared}")
+
+    model_dataset = "xrf55" if info["device"] == "xrf55" else "sshar_" + info["device"]
+    model = get_model(
+        model_name=args.model,
+        input_shape=input_shape,
+        num_classes=num_classes,
+        dataset=model_dataset,
+    ).to(device)
+
+    run_name = f"r1_to_r2_{info['device']}_{args.model}_fold{args.fold}"
+    save_dir = os.path.join(args.result_root, run_name)
+    os.makedirs(save_dir, exist_ok=True)
+    print("Save dir    :", save_dir)
+
+    total_params = sum(p.numel() for p in model.parameters())
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    complexity = measure_model_complexity(model=model, input_shape=input_shape)
+    save_model_complexity(
+        save_dir=save_dir, dataset=args.exp, model=args.model,
+        total_params=total_params, trainable_params=trainable_params, complexity=complexity,
+    )
+    print(f"Params      : {total_params}")
+
+    history, results, training_time = train_v2(
+        model=model,
+        train_loader=train_loader,
+        val_loader=val_loader,
+        test_loader=test_loader,
+        epochs=args.epochs,
+        lr=args.lr,
+        device=device,
+        save_dir=save_dir,
+    )
+
+    extra = {
+        "experiment": args.exp,
+        "device": info["device"],
+        "fold": args.fold,
+        "src_room": info["src_room"],
+        "tgt_room": info["tgt_room"],
+        "norm_stats": info["norm_stats"],
+        "src_subjects": info["src_subjects"],
+        "tgt_subjects": sorted(set(info["test_subjects"])),
+        "shared_subjects": shared,
+        "class_names": info["class_names"],
+        "lr": args.lr,
+        "batch_size": args.batch_size,
+        "seed": SEED,
+    }
+    for selection, r in results.items():
+        print(f"\n>>> {selection} (epoch {r['epoch']}, val acc {r['val_acc']:.4f}) -> {r['dir']}")
+        evaluate_model(
+            history=history,
+            y_true=r["y_true"],
+            y_pred=r["y_pred"],
+            save_dir=r["dir"],
+            dataset=args.exp,
+            model=args.model,
+            best_epoch=r["epoch"],
+            train_size=info["train_size"],
+            test_size=info["test_size"],
+            training_time=training_time,
+            class_names=info["class_names"],
+            total_params=total_params,
+            trainable_params=trainable_params,
+            complexity=complexity,
+            selection=selection,
+            total_epochs=args.epochs,
+            val_size=info["val_size"],
+            extra=dict(extra, val_acc=r["val_acc"]),
+            subjects=info["test_subjects"],
+        )
+
+    print("\nFinished. Result folder:", save_dir)
+
+
 def main():
     args = parse_args()
+    if args.exp in CROSS_ENV_EXPERIMENTS:
+        run_cross_env(args)
+        return
     if args.exp is not None:
         run_v2(args)
         return
