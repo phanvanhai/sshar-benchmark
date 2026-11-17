@@ -26,7 +26,7 @@ from aggregate_v3 import MODELS, collect, mean_std
 from plot_results_v2 import SERIES_SAME, TEXT, MUTED, GRID, spread
 
 SERIES = SERIES_SAME          # run prefixes: room_0X_esp_esp, room_0X_asus_asus, xrf55
-DODGE = 0.035
+DODGE = 0.05
 
 
 def main():
@@ -88,8 +88,9 @@ def main():
     ax.tick_params(axis="x", labelsize=10, colors=TEXT, length=0)
     ax.set_xlim(-0.6, len(MODELS) - 1 + 0.6)
     ax.set_ylim(args.ymin, args.ymax)
-    ax.set_ylabel(("Accuracy (%)" if args.actions == 8 else "Accuracy on 6 actions (%)")
-                  + ", mean ± std over 5 folds")
+    ax.set_ylabel("Accuracy (%)" if args.actions == 8 else "Accuracy on 6 actions (%)")
+    ax.text(0.01, 0.99, "mean ± std over 5 folds", transform=ax.transAxes, ha="left", va="top",
+            fontsize=8, color=MUTED)
     ax.yaxis.grid(True, color=GRID, lw=0.8)
     ax.set_axisbelow(True)
     for s in ("top", "right"):
